@@ -52,10 +52,10 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 
 ### Terminal UI
 
-- [ ] **UI-01**: Each note displays its title and a Markdown-rendered preview (HTML-stripped, configurable length) suitable for Warp
-- [ ] **UI-02**: Single-keystroke category input is captured without Enter
-- [ ] **UI-03**: Help (`?`) shows an inline PARA quick-reference without leaving the flow
-- [ ] **UI-04**: Session start shows the inbox note count
+- [x] **UI-01**: Each note displays its title and a Markdown-rendered preview (HTML-stripped, configurable length) suitable for Warp
+- [x] **UI-02**: Single-keystroke category input is captured without Enter
+- [x] **UI-03**: Help (`?`) shows an inline PARA quick-reference without leaving the flow
+- [x] **UI-04**: Session start shows the inbox note count
 
 ### Session Tracking
 
@@ -136,10 +136,10 @@ Which phases cover which requirements. Populated during roadmap creation.
 | ROUT-06 | Phase 4 — Sorting Core | Complete |
 | ROUT-07 | Phase 4 — Sorting Core | Complete |
 | ROUT-08 | Phase 4 — Sorting Core | Complete |
-| UI-01 | Phase 4 — Sorting Core | Pending |
-| UI-02 | Phase 4 — Sorting Core | Pending |
-| UI-03 | Phase 4 — Sorting Core | Pending |
-| UI-04 | Phase 4 — Sorting Core | Pending |
+| UI-01 | Phase 4 — Sorting Core | Complete |
+| UI-02 | Phase 4 — Sorting Core | Complete |
+| UI-03 | Phase 4 — Sorting Core | Complete |
+| UI-04 | Phase 4 — Sorting Core | Complete |
 | SESS-01 | Phase 4 — Sorting Core | Pending |
 | SESS-02 | Phase 4 — Sorting Core | Pending |
 | SESS-03 | Phase 4 — Sorting Core | Pending |
