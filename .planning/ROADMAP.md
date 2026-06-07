@@ -13,7 +13,7 @@ Milestone 1 delivers a keyboard-driven, non-destructive PARA inbox triage tool f
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Scaffold** — Monorepo, pixi env, CI, pre-commit, branch protection, M2-M4 stubs
+- [x] **Phase 1: Scaffold** — Monorepo, pixi env, CI, pre-commit, branch protection, M2-M4 stubs
 - [ ] **Phase 2: AppleScript Bridge** — Read inbox, discover PARA structure, move note, ensure folder, typed errors, NotesRepositoryProtocol
 - [ ] **Phase 3: Backup** — Auto-backup-before-write, create/list/restore/prune, BackupError
 - [ ] **Phase 4: Sorting Core** — Config (Pydantic V2), PARA router state machine, terminal UI primitives, session tracking
