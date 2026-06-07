@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 04-04-PLAN.md
-last_updated: "2026-06-07T22:38:00.000Z"
+stopped_at: Completed 04-sorting-core 04-05-PLAN.md
+last_updated: "2026-06-07T22:31:38.990Z"
 last_activity: 2026-06-07 -- Phase 04 plan 04 executed; SESS-01/02/03 complete; SortSession + SessionSummary + write_log; 243 unit tests, 99.52% coverage
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 13
-  completed_plans: 11
-  percent: 50
+  completed_plans: 13
+  percent: 67
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-07)
 ## Current Position
 
 Phase: 04 (Sorting Core) — In Progress (4/5 plans complete)
-Plan: 4 of 5 complete
+Plan: 5 of 5 complete
 Status: Phase 4 plan 04 done — SortSession + frozen SessionSummary + write_log; 243 tests, 99.52% cov; 1 plan remaining (04-05 controller)
 Last activity: 2026-06-07 -- Phase 04 plan 04 executed; SESS-01/02/03 complete; SortSession + SessionSummary + write_log; 243 unit tests, 99.52% coverage
 
@@ -63,6 +63,7 @@ Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 | Phase 04-sorting-core P02 | 394 | 3 tasks | 3 files |
 | Phase 04-sorting-core P03 | 218 | 2 tasks | 3 files |
 | Phase 04-sorting-core P04 | ~8 min | 2 tasks (TDD) | 3 files |
+| Phase 04-sorting-core P05 | 371 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -106,6 +107,7 @@ Recent decisions affecting current work:
 - [Phase 04-sorting-core]: write_log clock injected via optional `now: datetime | None = None` kwarg — avoids frozen-default anti-pattern; tests pass fixed datetime
 - [Phase 04-sorting-core]: SessionSummary.total is a @property (moved+skipped+errors) — not stored; stays correct without a second mutation surface
 - [Phase 04-sorting-core]: notes_os.sorter.session added to pyproject.toml mypy disallow_any_explicit=false override (SessionSummary inherits BaseModel Any API)
+- [Phase ?]: SortController fully DI; build_default_controller wraps AppleScriptNotesRepository in BackingUpNotesRepository (SC4 backup-then-move)
 
 ### Pending Todos
 
@@ -118,6 +120,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T22:16:19.828Z
-Stopped at: Completed 04-03-PLAN.md
+Last session: 2026-06-07T22:31:38.986Z
+Stopped at: Completed 04-sorting-core 04-05-PLAN.md
 Resume file: None
