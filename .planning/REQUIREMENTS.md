@@ -9,8 +9,8 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 
 ### Scaffold & Infrastructure
 
-- [ ] **SCAF-01**: Monorepo initialized with src layout (`src/notes_os/`), pixi environment, and pyproject.toml (Hatchling + hatch-vcs) exposing the `notes` entry point
-- [ ] **SCAF-02**: Stub `__init__.py` modules exist for `distiller/`, `graph/`, `suggestions/` (M2–M4) so package structure is stable
+- [x] **SCAF-01**: Monorepo initialized with src layout (`src/notes_os/`), pixi environment, and pyproject.toml (Hatchling + hatch-vcs) exposing the `notes` entry point
+- [x] **SCAF-02**: Stub `__init__.py` modules exist for `distiller/`, `graph/`, `suggestions/` (M2–M4) so package structure is stable
 - [ ] **SCAF-03**: CI runs three tiered jobs (lint, typecheck, test) on macOS-latest × Python 3.11 and 3.12
 - [ ] **SCAF-04**: Pre-commit hooks enforce ruff, ruff-format, mypy strict, and file hygiene on commit
 - [ ] **SCAF-05**: Repo configured with branch protection on `main`, squash-merge, CODEOWNERS, and PR/issue templates
@@ -92,7 +92,7 @@ Deferred — acknowledged but not in the M1 roadmap.
 Explicitly excluded from M1. Documented to prevent scope creep.
 
 | Feature | Reason |
-|---------|--------|
+| --- | --- |
 | Creating new PARA root folders | Roots discovered dynamically; v1 only routes into existing structure |
 | Bulk / batch moves without review | Defeats the human-in-the-loop triage model |
 | Undo functionality post-move | Backup/restore covers recovery instead |
@@ -107,9 +107,9 @@ Explicitly excluded from M1. Documented to prevent scope creep.
 Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
-|-------------|-------|--------|
-| SCAF-01 | Phase 1 — Scaffold | Pending |
-| SCAF-02 | Phase 1 — Scaffold | Pending |
+| --- | --- | --- |
+| SCAF-01 | Phase 1 — Scaffold | Complete |
+| SCAF-02 | Phase 1 — Scaffold | Complete |
 | SCAF-03 | Phase 1 — Scaffold | Pending |
 | SCAF-04 | Phase 1 — Scaffold | Pending |
 | SCAF-05 | Phase 1 — Scaffold | Pending |
@@ -154,6 +154,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | TUI-05 | Phase 6 — Textual TUI Integration | Pending |
 
 **Coverage:**
+
 - v1 requirements: 44 total (note: earlier count of 37 was an undercount; 44 enumerated requirements confirmed)
 - Mapped to phases: 44
 - Unmapped: 0 ✓
