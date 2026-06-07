@@ -108,13 +108,56 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| _(populated by roadmapper)_ | | |
+| SCAF-01 | Phase 1 — Scaffold | Pending |
+| SCAF-02 | Phase 1 — Scaffold | Pending |
+| SCAF-03 | Phase 1 — Scaffold | Pending |
+| SCAF-04 | Phase 1 — Scaffold | Pending |
+| SCAF-05 | Phase 1 — Scaffold | Pending |
+| BRDG-01 | Phase 2 — AppleScript Bridge | Pending |
+| BRDG-02 | Phase 2 — AppleScript Bridge | Pending |
+| BRDG-03 | Phase 2 — AppleScript Bridge | Pending |
+| BRDG-04 | Phase 2 — AppleScript Bridge | Pending |
+| BRDG-05 | Phase 2 — AppleScript Bridge | Pending |
+| BRDG-06 | Phase 2 — AppleScript Bridge | Pending |
+| BRDG-07 | Phase 2 — AppleScript Bridge | Pending |
+| BKUP-01 | Phase 3 — Backup | Pending |
+| BKUP-02 | Phase 3 — Backup | Pending |
+| BKUP-03 | Phase 3 — Backup | Pending |
+| BKUP-04 | Phase 3 — Backup | Pending |
+| BKUP-05 | Phase 3 — Backup | Pending |
+| BKUP-06 | Phase 3 — Backup | Pending |
+| CONF-01 | Phase 4 — Sorting Core | Pending |
+| CONF-02 | Phase 4 — Sorting Core | Pending |
+| ROUT-01 | Phase 4 — Sorting Core | Pending |
+| ROUT-02 | Phase 4 — Sorting Core | Pending |
+| ROUT-03 | Phase 4 — Sorting Core | Pending |
+| ROUT-04 | Phase 4 — Sorting Core | Pending |
+| ROUT-05 | Phase 4 — Sorting Core | Pending |
+| ROUT-06 | Phase 4 — Sorting Core | Pending |
+| ROUT-07 | Phase 4 — Sorting Core | Pending |
+| ROUT-08 | Phase 4 — Sorting Core | Pending |
+| UI-01 | Phase 4 — Sorting Core | Pending |
+| UI-02 | Phase 4 — Sorting Core | Pending |
+| UI-03 | Phase 4 — Sorting Core | Pending |
+| UI-04 | Phase 4 — Sorting Core | Pending |
+| SESS-01 | Phase 4 — Sorting Core | Pending |
+| SESS-02 | Phase 4 — Sorting Core | Pending |
+| SESS-03 | Phase 4 — Sorting Core | Pending |
+| TASK-01 | Phase 5 — Task Extraction | Pending |
+| TASK-02 | Phase 5 — Task Extraction | Pending |
+| TASK-03 | Phase 5 — Task Extraction | Pending |
+| TASK-04 | Phase 5 — Task Extraction | Pending |
+| TUI-01 | Phase 6 — Textual TUI Integration | Pending |
+| TUI-02 | Phase 6 — Textual TUI Integration | Pending |
+| TUI-03 | Phase 6 — Textual TUI Integration | Pending |
+| TUI-04 | Phase 6 — Textual TUI Integration | Pending |
+| TUI-05 | Phase 6 — Textual TUI Integration | Pending |
 
 **Coverage:**
-- v1 requirements: 37 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 37 ⚠️
+- v1 requirements: 44 total (note: earlier count of 37 was an undercount; 44 enumerated requirements confirmed)
+- Mapped to phases: 44
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-07*
-*Last updated: 2026-06-07 after initial definition*
+*Last updated: 2026-06-07 — traceability populated after roadmap creation*
