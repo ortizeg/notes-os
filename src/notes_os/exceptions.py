@@ -56,3 +56,18 @@ class NotesMoveError(NotesError):
     Args:
         note_id: The opaque Apple Notes identifier that could not be located.
     """
+
+
+class BackupError(NotesOSError):
+    """Raised when a backup operation fails — creation, restore, or prune.
+
+    A ``BackupError`` raised before a write ABORTS that write (BKUP-06).  The
+    full NotesOS exception surface is catchable with a single
+    ``except NotesOSError`` clause because this class inherits from
+    :class:`NotesOSError`.
+
+    Raised by :class:`~notes_os.backup.BackupManager` when:
+    - The mandatory ``NoteStore.sqlite`` is absent from the source directory.
+    - A file-copy or directory operation raises an ``OSError``.
+    - A restore or prune operation fails (Phase 03-02).
+    """
