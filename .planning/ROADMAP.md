@@ -31,12 +31,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A `git push` to a feature branch triggers the three-job CI matrix (lint / typecheck / test) on macOS-latest × Python 3.11 and 3.12 and all jobs pass on the scaffold
   4. A commit with a ruff violation or a missing type annotation is rejected by the pre-commit hook before it reaches the remote
   5. The `main` branch requires a passing PR to accept changes and CODEOWNERS is enforced
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: Monorepo init — pyproject.toml (Hatchling + hatch-vcs), pixi.toml, src layout, `notes` entry point, M2-M4 stubs
-- [ ] 01-02: CI + pre-commit — three-job GitHub Actions workflow, ruff/mypy/pytest gates, pre-commit config
-- [ ] 01-03: Repo hardening — branch protection, squash-merge, CODEOWNERS, PR/issue templates, CLAUDE.md
+- [ ] 01-01-PLAN.md — Monorepo init: pyproject.toml (Hatchling + hatch-vcs), pixi.toml, src layout, `notes` entry point, M2-M4 stubs
+- [ ] 01-02-PLAN.md — CI + pre-commit: three-job GitHub Actions matrix (lint/typecheck/test, macOS × 3.11/3.12), pre-commit hooks
+- [ ] 01-03-PLAN.md — Repo hardening: CODEOWNERS, PR/issue templates, CLAUDE.md, conditional branch-protection script
 
 ---
 
@@ -142,7 +142,7 @@ Plans:
 Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
+| --- | --- | --- | --- |
 | 1. Scaffold | 0/3 | Not started | - |
 | 2. AppleScript Bridge | 0/3 | Not started | - |
 | 3. Backup | 0/2 | Not started | - |
