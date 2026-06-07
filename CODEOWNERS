@@ -1,0 +1,11 @@
+# CODEOWNERS
+#
+# This file enforces code review by assigning default ownership to all files in
+# the repository. Once branch protection is enabled on `main` (see
+# scripts/setup-branch-protection.sh), GitHub will require at least one
+# CODEOWNERS-designated reviewer to approve every pull request.
+#
+# Syntax: <pattern> <@owner> [<@owner>...]
+# The last matching rule wins.
+
+* @ortizeg

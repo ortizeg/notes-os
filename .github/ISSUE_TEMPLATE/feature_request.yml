@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest a new feature or improvement for NotesOS
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, check whether this is already covered by an open issue or a planned
+        milestone (M2 Distillation Engine, M3 Knowledge Graph, M4 Smart Suggestions).
+
+  - type: textarea
+    id: problem-motivation
+    attributes:
+      label: Problem / motivation
+      description: |
+        What problem does this feature solve? Who is affected and how often?
+        A clear problem statement is more persuasive than a solution description.
+      placeholder: "e.g. When I have 50+ notes in the inbox I lose context mid-session because there is no progress counter."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe the feature you'd like to see. Be as specific as possible about the UI/CLI/API changes.
+      placeholder: "e.g. Show a persistent status bar in the sort screen: `Sorted 12 / 47 · Skipped 3`."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives-considered
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you consider? Why are they not sufficient?
+
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Which milestone does this relate to?
+      description: |
+        M1 = PARA Sorter (active), M2 = Distillation Engine, M3 = Knowledge Graph, M4 = Smart Suggestions.
+        If unsure, pick the earliest milestone where it would fit.
+      options:
+        - "M1 — PARA Sorter (active)"
+        - "M2 — Distillation Engine"
+        - "M3 — Knowledge Graph"
+        - "M4 — Smart Suggestions"
+        - "Not milestone-specific / cross-cutting"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Any mockups, related issues, prior art, or links that would help evaluate this request.

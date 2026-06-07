@@ -1,0 +1,80 @@
+name: Bug report
+description: Something is broken — help us fix it
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report. Please be as specific as possible.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: "e.g. The `notes` command crashes when the inbox contains a note with a blank title."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide step-by-step instructions to reproduce the issue.
+      placeholder: |
+        1. Open Apple Notes and create a note with an empty title.
+        2. Run `pixi run notes`.
+        3. Press `s` to start sorting.
+        4. See error.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+      placeholder: "e.g. The sorter should skip notes with blank titles and log a warning."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Which version of macOS are you running?
+      options:
+        - macOS 15 Sequoia
+        - macOS 14 Sonoma
+        - macOS 13 Ventura
+        - macOS 12 Monterey
+        - Other (specify in Additional context)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: python-version
+    attributes:
+      label: Python version
+      description: Which Python version is active in the pixi env?
+      options:
+        - "3.12"
+        - "3.11"
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: apple-notes-version
+    attributes:
+      label: Apple Notes version
+      description: "Notes.app version (Help → About Notes or System Information)"
+      placeholder: "e.g. 4.9"
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: |
+        Paste any relevant log output, stack traces, or screenshots here.
+        Logs are written to `~/.notes-os/logs/`.

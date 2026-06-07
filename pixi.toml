@@ -1,0 +1,21 @@
+[workspace]
+name = "para-notes-sorter"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64"]
+
+[dependencies]
+python = ">=3.11,<3.13"
+
+[pypi-dependencies]
+para-notes-sorter = { path = ".", editable = true }
+ruff = "*"
+mypy = "*"
+pytest = "*"
+pytest-cov = "*"
+
+[tasks]
+notes = "notes"
+ruff = "ruff check src tests"
+format = "ruff format src tests"
+mypy = "mypy src"
+pytest = "pytest"

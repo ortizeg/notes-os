@@ -1,0 +1,60 @@
+name: "Lint & Typecheck"
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  lint:
+    name: "Lint (ruff)"
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff check
+        run: ruff check src tests
+
+      - name: Run ruff format check
+        run: ruff format --check src tests
+
+  typecheck:
+    name: "Typecheck (mypy strict)"
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install project and type-checking dependencies
+        run: |
+          pip install -e .
+          pip install mypy pydantic
+
+      - name: Run mypy (strict)
+        run: mypy src
