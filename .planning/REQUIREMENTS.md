@@ -17,13 +17,13 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 
 ### AppleScript Bridge
 
-- [ ] **BRDG-01**: System reads all notes (id, title, HTML body) from the configured inbox folder
-- [ ] **BRDG-02**: System discovers the full PARA folder structure (roots + subfolders) dynamically at runtime
+- [x] **BRDG-01**: System reads all notes (id, title, HTML body) from the configured inbox folder
+- [x] **BRDG-02**: System discovers the full PARA folder structure (roots + subfolders) dynamically at runtime
 - [ ] **BRDG-03**: System moves a note by ID to a resolved folder path
 - [ ] **BRDG-04**: System creates a folder when it does not exist (idempotent `ensure_folder`)
-- [ ] **BRDG-05**: Note HTML body is stripped to plain text (stdlib only) and truncated to the configured preview length
+- [x] **BRDG-05**: Note HTML body is stripped to plain text (stdlib only) and truncated to the configured preview length
 - [ ] **BRDG-06**: AppleScript failures raise typed errors (`NotesError`, `FolderNotFoundError`, `NotesMoveError`) and surface as warnings without crashing the session
-- [ ] **BRDG-07**: All bridge operations sit behind `NotesRepositoryProtocol` so the UI and router never call AppleScript directly
+- [x] **BRDG-07**: All bridge operations sit behind `NotesRepositoryProtocol` so the UI and router never call AppleScript directly
 
 ### Backup
 
@@ -113,13 +113,13 @@ Which phases cover which requirements. Populated during roadmap creation.
 | SCAF-03 | Phase 1 — Scaffold | Pending |
 | SCAF-04 | Phase 1 — Scaffold | Pending |
 | SCAF-05 | Phase 1 — Scaffold | Complete |
-| BRDG-01 | Phase 2 — AppleScript Bridge | Pending |
-| BRDG-02 | Phase 2 — AppleScript Bridge | Pending |
+| BRDG-01 | Phase 2 — AppleScript Bridge | Complete |
+| BRDG-02 | Phase 2 — AppleScript Bridge | Complete |
 | BRDG-03 | Phase 2 — AppleScript Bridge | Pending |
 | BRDG-04 | Phase 2 — AppleScript Bridge | Pending |
-| BRDG-05 | Phase 2 — AppleScript Bridge | Pending |
+| BRDG-05 | Phase 2 — AppleScript Bridge | Complete |
 | BRDG-06 | Phase 2 — AppleScript Bridge | Pending |
-| BRDG-07 | Phase 2 — AppleScript Bridge | Pending |
+| BRDG-07 | Phase 2 — AppleScript Bridge | Complete |
 | BKUP-01 | Phase 3 — Backup | Pending |
 | BKUP-02 | Phase 3 — Backup | Pending |
 | BKUP-03 | Phase 3 — Backup | Pending |
