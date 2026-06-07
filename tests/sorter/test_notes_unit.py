@@ -116,7 +116,11 @@ def _default_repo() -> AppleScriptNotesRepository:
         # numeric entity decoded
         ("<p>&#169; 2024</p>", 250, "© 2024"),
         # rsquo named entity
-        ("<p>Monday&rsquo;s meeting</p>", 250, "Monday’s meeting"),  # noqa: RUF001  # intentional: Unicode curly apostrophe expected output
+        (
+            "<p>Monday&rsquo;s meeting</p>",
+            250,
+            "Monday’s meeting",
+        ),  # intentional: Unicode curly apostrophe expected output
         # truncation: limit 10 on a longer string
         ("Hello, this is a long string", 10, "Hello, thi"),
         # truncation AFTER stripping: tag chars don't count toward length
@@ -208,7 +212,7 @@ class TestGetInboxNotes:
     def test_special_chars_in_title_survive_round_trip(self) -> None:
         """Apostrophes, quotes, and Unicode in titles survive the US/RS round-trip."""
         repo = _default_repo()
-        title = "It’s Café Day — Notes"  # noqa: RUF001  # intentional: Unicode curly apostrophe in test title
+        title = "It’s Café Day — Notes"  # intentional: Unicode curly apostrophe in test title
         stdout = _inbox_stdout([("id_uni", title, "<p>body</p>")])
         with patch(
             "notes_os.sorter.notes.subprocess.run",
