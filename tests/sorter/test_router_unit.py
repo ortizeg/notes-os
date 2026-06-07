@@ -7,11 +7,14 @@ requirement is exercised in isolation.
 
 from __future__ import annotations
 
+import datetime
+
 import pytest
+from pydantic import ValidationError
 
 from notes_os.config import ArchiveConfig, SorterConfig
 from notes_os.sorter.models import Note, ParaStructure
-from notes_os.sorter.router import RouteAction, RouteResult, Router, RouterState
+from notes_os.sorter.router import RouteAction, Router, RouteResult, RouterState
 from tests.sorter.conftest import MockNotesRepository
 
 
@@ -40,7 +43,13 @@ class TestRouterStateEnum:
 
     def test_all_states_exist(self) -> None:
         states = {s.name for s in RouterState}
-        assert states == {"SHOW_NOTE", "AWAIT_CATEGORY", "AWAIT_FOLDER", "AWAIT_SUBFOLDER", "CONFIRM_MOVE"}
+        assert states == {
+            "SHOW_NOTE",
+            "AWAIT_CATEGORY",
+            "AWAIT_FOLDER",
+            "AWAIT_SUBFOLDER",
+            "CONFIRM_MOVE",
+        }
 
     def test_states_are_distinct(self) -> None:
         values = [s.value for s in RouterState]
@@ -69,7 +78,7 @@ class TestRouteResultModel:
 
     def test_immutable(self) -> None:
         r = RouteResult(state=RouterState.AWAIT_CATEGORY)
-        with pytest.raises(Exception):  # ValidationError (frozen)
+        with pytest.raises(ValidationError):
             r.state = RouterState.SHOW_NOTE  # type: ignore[misc]
 
 
@@ -79,7 +88,12 @@ class TestAwaitCategoryTransition:
     def setup_method(self) -> None:
         structure = ParaStructure(
             roots=("Projects", "Areas", "Resources", "Archive"),
-            subfolders={"Projects": ("General", "Web"), "Areas": (), "Resources": (), "Archive": ()},
+            subfolders={
+                "Projects": ("General", "Web"),
+                "Areas": (),
+                "Resources": (),
+                "Archive": (),
+            },
         )
         notes = [_note("id1")]
         self.repo = MockNotesRepository(notes=notes, structure=structure)
@@ -105,23 +119,66 @@ class TestAwaitCategoryTransition:
         # The router must record which root was selected — check via selected_root attribute
         assert result.selected_root == "Projects"
 
-    def test_a_lower_moves_to_await_folder_areas(self) -> None:
+    def test_a_lower_moves_directly_when_no_folders(self) -> None:
+        """Areas has no sub-folders → router moves directly to root ('Areas',)."""
         result = self.router.handle_category("a", self.note)
-        assert result.state == RouterState.AWAIT_FOLDER
-        assert result.selected_root == "Areas"
+        # Areas has no sub-folders in the fixture, so auto-move to root
+        assert result.state == RouterState.SHOW_NOTE
+        assert result.action == RouteAction.MOVE
+        assert result.folder_path == ("Areas",)
 
-    def test_A_upper_moves_to_await_folder_areas(self) -> None:
+    def test_A_upper_moves_directly_when_no_folders(self) -> None:
         result = self.router.handle_category("A", self.note)
+        assert result.state == RouterState.SHOW_NOTE
+        assert result.action == RouteAction.MOVE
+        assert result.folder_path == ("Areas",)
+
+    def test_a_moves_to_await_folder_when_areas_has_subfolders(self) -> None:
+        """When Areas has sub-folders, A goes to AWAIT_FOLDER."""
+        structure = ParaStructure(
+            roots=("Projects", "Areas", "Resources", "Archive"),
+            subfolders={
+                "Projects": ("General", "Web"),
+                "Areas": ("Finance", "Health"),
+                "Resources": (),
+                "Archive": (),
+            },
+        )
+        notes = [_note("id1")]
+        repo = MockNotesRepository(notes=notes, structure=structure)
+        router = Router(repo=repo, config=self.cfg, year_provider=lambda: 2031)
+        result = router.handle_category("a", self.note)
         assert result.state == RouterState.AWAIT_FOLDER
         assert result.selected_root == "Areas"
 
-    def test_r_lower_moves_to_await_folder_resources(self) -> None:
+    def test_r_lower_moves_directly_when_no_folders(self) -> None:
+        """Resources has no sub-folders → moves directly to root."""
         result = self.router.handle_category("r", self.note)
-        assert result.state == RouterState.AWAIT_FOLDER
-        assert result.selected_root == "Resources"
+        assert result.state == RouterState.SHOW_NOTE
+        assert result.action == RouteAction.MOVE
+        assert result.folder_path == ("Resources",)
 
-    def test_R_upper_moves_to_await_folder_resources(self) -> None:
+    def test_R_upper_moves_directly_when_no_folders(self) -> None:
         result = self.router.handle_category("R", self.note)
+        assert result.state == RouterState.SHOW_NOTE
+        assert result.action == RouteAction.MOVE
+        assert result.folder_path == ("Resources",)
+
+    def test_r_moves_to_await_folder_when_resources_has_subfolders(self) -> None:
+        """When Resources has sub-folders, R goes to AWAIT_FOLDER."""
+        structure = ParaStructure(
+            roots=("Projects", "Areas", "Resources", "Archive"),
+            subfolders={
+                "Projects": ("General",),
+                "Areas": (),
+                "Resources": ("Books", "Tools"),
+                "Archive": (),
+            },
+        )
+        notes = [_note("id1")]
+        repo = MockNotesRepository(notes=notes, structure=structure)
+        router = Router(repo=repo, config=self.cfg, year_provider=lambda: 2031)
+        result = router.handle_category("r", self.note)
         assert result.state == RouterState.AWAIT_FOLDER
         assert result.selected_root == "Resources"
 
@@ -170,7 +227,12 @@ class TestArchiveAutoYear:
     def setup_method(self) -> None:
         structure = ParaStructure(
             roots=("Projects", "Areas", "Resources", "Archive"),
-            subfolders={"Projects": ("General", "Web"), "Areas": (), "Resources": (), "Archive": ()},
+            subfolders={
+                "Projects": ("General", "Web"),
+                "Areas": (),
+                "Resources": (),
+                "Archive": (),
+            },
         )
         notes = [_note("id1")]
         self.repo = MockNotesRepository(notes=notes, structure=structure)
@@ -244,7 +306,6 @@ class TestArchiveAutoYear:
         # Just verify it doesn't raise; year will be current year
         result = router.handle_category("x", _note("id1"))
         assert result.action == RouteAction.MOVE
-        import datetime
         assert result.folder_path == ("Archive", str(datetime.datetime.now().year))
 
 
@@ -260,7 +321,12 @@ class TestAwaitFolderTransition:
         # Projects has subfolders (General, Web); Areas has none
         self.structure = ParaStructure(
             roots=("Projects", "Areas", "Resources", "Archive"),
-            subfolders={"Projects": ("General", "Web"), "Areas": (), "Resources": (), "Archive": ()},
+            subfolders={
+                "Projects": ("General", "Web"),
+                "Areas": (),
+                "Resources": (),
+                "Archive": (),
+            },
         )
         notes = [_note("id1")]
         self.repo = MockNotesRepository(notes=notes, structure=self.structure)
@@ -295,12 +361,25 @@ class TestAwaitFolderTransition:
             assert result.folder_path == ("Areas",)
 
     def test_folder_with_subfolders_goes_to_await_subfolder(self) -> None:
-        """Selecting folder 1 (General) under Projects (which has subfolders) → AWAIT_SUBFOLDER."""
-        # First select Projects
-        cat_result = self.router.handle_category("p", self.note)
+        """Selecting folder 1 (General) under Projects (which has sub-subfolders) → AWAIT_SUBFOLDER."""
+        # Need a 3-level structure: Projects → General → (Research, Docs)
+        structure = ParaStructure(
+            roots=("Projects", "Areas", "Resources", "Archive"),
+            subfolders={
+                "Projects": ("General", "Web"),
+                "Projects/General": ("Research", "Docs"),  # sub-subfolders
+                "Areas": (),
+                "Resources": (),
+                "Archive": (),
+            },
+        )
+        notes = [_note("id1")]
+        repo = MockNotesRepository(notes=notes, structure=structure)
+        router = Router(repo=repo, config=self.cfg, year_provider=lambda: 2031)
+        cat_result = router.handle_category("p", self.note)
         assert cat_result.state == RouterState.AWAIT_FOLDER
         # Now select folder index 1 (General — General is first)
-        result = self.router.handle_folder(1, cat_result, self.note)
+        result = router.handle_folder(1, cat_result, self.note)
         assert result.state == RouterState.AWAIT_SUBFOLDER
 
     def test_folder_without_subfolders_moves_immediately(self) -> None:
@@ -387,7 +466,12 @@ class TestGeneralFirstOrdering:
         # Projects has General + Web; General must appear first in options
         self.structure = ParaStructure(
             roots=("Projects", "Areas", "Resources", "Archive"),
-            subfolders={"Projects": ("Web", "General"), "Areas": (), "Resources": (), "Archive": ()},
+            subfolders={
+                "Projects": ("Web", "General"),
+                "Areas": (),
+                "Resources": (),
+                "Archive": (),
+            },
         )
         notes = [_note("id1")]
         self.repo = MockNotesRepository(notes=notes, structure=self.structure)
