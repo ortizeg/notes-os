@@ -1,12 +1,12 @@
-"""Unit tests for the NotesOS backup subsystem (plan 03-01).
+"""Unit tests for the NotesOS backup subsystem (plans 03-01 and 03-02).
 
-Covers :class:`~notes_os.backup.BackupManager` (create + list) and
+Covers :class:`~notes_os.backup.BackupManager` (create + list + restore + prune) and
 :class:`~notes_os.backup.BackingUpNotesRepository` (decorator backup-before-write
 and fail-aborts-write) using ``tmp_path`` fixtures and local mocks.  No
 AppleScript, no real Notes database, no network.  All tests run under the
 default ``-m 'not integration'`` CI gate.
 
-Test helpers defined here for reuse by plan 03-02:
+Test helpers defined here for reuse:
 - ``make_db_dir(tmp_path, include_sidecars=True)`` — writes the three Notes DB
   files (or just the mandatory sqlite) into a tmp source directory.
 - ``make_config(tmp_path, **overrides)`` — builds a ``BackupConfig`` pointing at
@@ -15,11 +15,14 @@ Test helpers defined here for reuse by plan 03-02:
   and can be configured to raise ``BackupError``.
 - ``make_inner(notes, structure)`` — constructs a ``MockNotesRepository`` with
   minimal seed data.
+- ``make_backup_dirs(backup_dir, timestamps)`` — builds timestamped backup dirs
+  deterministically without real-time sleeps (for prune/restore ordering tests).
 """
 
 from __future__ import annotations
 
 import datetime
+import shutil
 from pathlib import Path  # noqa: TC003  # used at runtime in function bodies
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -27,6 +30,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from notes_os.backup import (
+    _DIR_PREFIX,
+    _TS_FORMAT,
     NOTE_STORE_DB,
     NOTE_STORE_FILES,
     NOTE_STORE_SIDECARS,
@@ -584,3 +589,313 @@ def test_list_skips_non_directory_entries(tmp_path: Path) -> None:
 
     result = mgr.list()
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Plan 03-02 helpers
+# ---------------------------------------------------------------------------
+
+
+def make_backup_dirs(
+    backup_dir: Path,
+    timestamps: list[datetime.datetime],
+    *,
+    include_sidecars: bool = True,
+) -> list[Backup]:
+    """Build pre-made backup directories for deterministic restore/prune tests.
+
+    Creates each backup directory under *backup_dir* with the canonical
+    ``NoteStore_<ts>`` name and populates it with stub files.  Does NOT
+    involve real-time sleeps — timestamps are crafted and distinct.
+
+    Args:
+        backup_dir: The directory to place backup dirs in (created if absent).
+        timestamps: Ordered list of :class:`datetime.datetime` values for each
+            backup; typically supplied oldest-first so the returned list is
+            easiest to assert on.
+        include_sidecars: When ``True`` (default), write WAL/SHM sidecar files
+            in addition to the mandatory sqlite file.
+
+    Returns:
+        A list of :class:`~notes_os.backup_models.Backup` records corresponding
+        to the created directories, in the SAME order as *timestamps*.
+    """
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    created: list[Backup] = []
+    for ts in timestamps:
+        dir_name = _DIR_PREFIX + ts.strftime(_TS_FORMAT)
+        bp = backup_dir / dir_name
+        bp.mkdir()
+        (bp / NOTE_STORE_DB).write_bytes(b"sqlite-" + ts.strftime(_TS_FORMAT).encode())
+        if include_sidecars:
+            for sidecar in NOTE_STORE_SIDECARS:
+                (bp / sidecar).write_bytes(b"sidecar-" + sidecar.encode())
+        created.append(Backup(timestamp=ts, path=bp))
+    return created
+
+
+# ---------------------------------------------------------------------------
+# restore() unit tests (03-02)
+# ---------------------------------------------------------------------------
+
+
+def test_restore_latest_overwrites(tmp_path: Path) -> None:
+    """restore('latest') copies backup files back over notes_db_dir."""
+    db_dir = make_db_dir(tmp_path, include_sidecars=True)
+    cfg = make_config(tmp_path, notes_db_dir=db_dir)
+    mgr = BackupManager(cfg)
+
+    # Create a backup, then overwrite source with v2 data.
+    backup = mgr.create()
+    for name in NOTE_STORE_FILES:
+        (db_dir / name).write_bytes(b"v2-" + name.encode())
+
+    restored = mgr.restore("latest")
+
+    assert restored.path == backup.path
+    # Source files must match the backup bytes (i.e. v1 from create() time).
+    for name in NOTE_STORE_FILES:
+        assert (db_dir / name).read_bytes() == (backup.path / name).read_bytes(), (
+            f"{name} not restored"
+        )
+
+
+def test_restore_specific_timestamp(tmp_path: Path) -> None:
+    """restore(timestamp) targets the backup matching that exact timestamp string."""
+    backup_dir = tmp_path / "bk"
+    ts_old = datetime.datetime(2026, 6, 1, 10, 0, 0)
+    ts_new = datetime.datetime(2026, 6, 7, 12, 0, 0)
+    backups = make_backup_dirs(backup_dir, [ts_old, ts_new])
+    old_backup, _new_backup = backups
+
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    (db_dir / NOTE_STORE_DB).write_bytes(b"live")
+    for sidecar in NOTE_STORE_SIDECARS:
+        (db_dir / sidecar).write_bytes(b"live")
+
+    cfg = BackupConfig(notes_db_dir=db_dir, backup_dir=backup_dir)
+    mgr = BackupManager(cfg)
+
+    target_ts = ts_old.strftime(_TS_FORMAT)
+    restored = mgr.restore(target_ts)
+
+    assert restored.path == old_backup.path
+    assert (db_dir / NOTE_STORE_DB).read_bytes() == (old_backup.path / NOTE_STORE_DB).read_bytes()
+
+
+def test_restore_unknown_timestamp_raises(tmp_path: Path) -> None:
+    """restore() with an unrecognised timestamp string raises BackupError."""
+    backup_dir = tmp_path / "bk"
+    ts = datetime.datetime(2026, 6, 7, 12, 0, 0)
+    make_backup_dirs(backup_dir, [ts])
+
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    (db_dir / NOTE_STORE_DB).write_bytes(b"live")
+
+    cfg = BackupConfig(notes_db_dir=db_dir, backup_dir=backup_dir)
+    mgr = BackupManager(cfg)
+
+    with pytest.raises(BackupError, match="no backup for timestamp"):
+        mgr.restore("1999-01-01_00-00-00")
+
+
+def test_restore_empty_dir_raises(tmp_path: Path) -> None:
+    """restore('latest') when no backups exist raises BackupError."""
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = BackupConfig(
+        notes_db_dir=db_dir,
+        backup_dir=tmp_path / "nonexistent_backups",
+    )
+    mgr = BackupManager(cfg)
+
+    with pytest.raises(BackupError, match="no backups to restore"):
+        mgr.restore("latest")
+
+
+def test_restore_incomplete_backup_raises(tmp_path: Path) -> None:
+    """restore() raises BackupError when backup dir is missing a required file."""
+    backup_dir = tmp_path / "bk"
+    ts = datetime.datetime(2026, 6, 7, 12, 0, 0)
+    make_backup_dirs(backup_dir, [ts], include_sidecars=True)
+
+    # Remove one of the three files from the backup to simulate incomplete backup.
+    bp = backup_dir / (_DIR_PREFIX + ts.strftime(_TS_FORMAT))
+    (bp / NOTE_STORE_SIDECARS[0]).unlink()
+
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    (db_dir / NOTE_STORE_DB).write_bytes(b"live")
+
+    cfg = BackupConfig(notes_db_dir=db_dir, backup_dir=backup_dir)
+    mgr = BackupManager(cfg)
+
+    with pytest.raises(BackupError, match="incomplete backup"):
+        mgr.restore("latest")
+
+
+def test_restore_oserror_raises_backuperror(tmp_path: Path) -> None:
+    """OSError during file copy in restore() is wrapped in BackupError."""
+    db_dir = make_db_dir(tmp_path, include_sidecars=True)
+    cfg = make_config(tmp_path, notes_db_dir=db_dir)
+    mgr = BackupManager(cfg)
+    mgr.create()
+
+    with (
+        patch("shutil.copy2", side_effect=OSError("disk full")),
+        pytest.raises(BackupError),
+    ):
+        mgr.restore("latest")
+
+
+# ---------------------------------------------------------------------------
+# prune() unit tests (03-02)
+# ---------------------------------------------------------------------------
+
+
+def test_prune_retention_keeps_newest(tmp_path: Path) -> None:
+    """prune(retention=3) of 5 backups leaves exactly the 3 newest (SC4)."""
+    backup_dir = tmp_path / "bk"
+    timestamps = [datetime.datetime(2026, 6, 1, 10, 0, i) for i in range(5)]
+    make_backup_dirs(backup_dir, timestamps)
+
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = BackupConfig(notes_db_dir=db_dir, backup_dir=backup_dir)
+    mgr = BackupManager(cfg)
+
+    assert len(mgr.list()) == 5
+
+    deleted = mgr.prune(retention=3)
+    remaining = mgr.list()
+
+    assert len(remaining) == 3, f"expected 3 remaining, got {len(remaining)}"
+    assert len(deleted) == 2, f"expected 2 deleted, got {len(deleted)}"
+
+    # The 3 newest are kept (timestamps[-3:] = seconds 2, 3, 4).
+    kept_ts = {b.timestamp for b in remaining}
+    expected_ts = set(timestamps[-3:])
+    assert kept_ts == expected_ts, f"wrong backups kept: {kept_ts} vs {expected_ts}"
+
+
+def test_prune_default_uses_max_backups(tmp_path: Path) -> None:
+    """prune() with no args uses config.max_backups as the retention count."""
+    backup_dir = tmp_path / "bk"
+    # 5 backups, max_backups=3 → prune() should delete 2.
+    timestamps = [datetime.datetime(2026, 6, 1, 10, 0, i) for i in range(5)]
+    make_backup_dirs(backup_dir, timestamps)
+
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = BackupConfig(notes_db_dir=db_dir, backup_dir=backup_dir, max_backups=3)
+    mgr = BackupManager(cfg)
+
+    deleted = mgr.prune()  # uses max_backups=3
+    remaining = mgr.list()
+
+    assert len(remaining) == 3
+    assert len(deleted) == 2
+
+
+def test_prune_noop_when_under_retention(tmp_path: Path) -> None:
+    """prune(retention=10) when only 3 backups exist deletes nothing."""
+    backup_dir = tmp_path / "bk"
+    timestamps = [datetime.datetime(2026, 6, 1, 10, 0, i) for i in range(3)]
+    make_backup_dirs(backup_dir, timestamps)
+
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = BackupConfig(notes_db_dir=db_dir, backup_dir=backup_dir, max_backups=10)
+    mgr = BackupManager(cfg)
+
+    deleted = mgr.prune(retention=10)
+    assert deleted == []
+    assert len(mgr.list()) == 3
+
+
+def test_prune_older_than(tmp_path: Path) -> None:
+    """prune(older_than=cutoff) deletes backups older than the cutoff."""
+    backup_dir = tmp_path / "bk"
+    timestamps = [
+        datetime.datetime(2026, 5, 1, 10, 0, 0),
+        datetime.datetime(2026, 5, 15, 10, 0, 0),
+        datetime.datetime(2026, 6, 1, 10, 0, 0),
+        datetime.datetime(2026, 6, 7, 10, 0, 0),
+    ]
+    make_backup_dirs(backup_dir, timestamps)
+
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = BackupConfig(notes_db_dir=db_dir, backup_dir=backup_dir, max_backups=10)
+    mgr = BackupManager(cfg)
+
+    # Cutoff: June 1 — backups from May should be deleted.
+    cutoff = datetime.datetime(2026, 6, 1, 0, 0, 0)
+    deleted = mgr.prune(older_than=cutoff)
+
+    remaining = mgr.list()
+    remaining_ts = {b.timestamp for b in remaining}
+
+    # May backups deleted; June backups kept.
+    assert datetime.datetime(2026, 5, 1, 10, 0, 0) not in remaining_ts
+    assert datetime.datetime(2026, 5, 15, 10, 0, 0) not in remaining_ts
+    assert datetime.datetime(2026, 6, 1, 10, 0, 0) in remaining_ts
+    assert datetime.datetime(2026, 6, 7, 10, 0, 0) in remaining_ts
+    assert len(deleted) == 2
+
+
+def test_prune_older_than_and_retention_combined(tmp_path: Path) -> None:
+    """prune(retention=2, older_than=cutoff) applies older_than first then retention."""
+    backup_dir = tmp_path / "bk"
+    timestamps = [
+        datetime.datetime(2026, 5, 1, 10, 0, 0),  # old → deleted by older_than
+        datetime.datetime(2026, 6, 1, 10, 0, 0),  # kept after older_than, then oldest
+        datetime.datetime(2026, 6, 5, 10, 0, 0),  # kept
+        datetime.datetime(2026, 6, 7, 10, 0, 0),  # kept (newest)
+    ]
+    make_backup_dirs(backup_dir, timestamps)
+
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = BackupConfig(notes_db_dir=db_dir, backup_dir=backup_dir, max_backups=10)
+    mgr = BackupManager(cfg)
+
+    cutoff = datetime.datetime(2026, 6, 1, 0, 0, 0)
+    # After older_than: 3 remain (Jun 1, Jun 5, Jun 7). retention=2 → delete Jun 1.
+    deleted = mgr.prune(retention=2, older_than=cutoff)
+
+    remaining = mgr.list()
+    assert len(remaining) == 2, f"expected 2 remaining, got {len(remaining)}"
+    assert len(deleted) == 2, f"expected 2 deleted, got {len(deleted)}"
+
+    remaining_ts = {b.timestamp for b in remaining}
+    assert datetime.datetime(2026, 6, 5, 10, 0, 0) in remaining_ts
+    assert datetime.datetime(2026, 6, 7, 10, 0, 0) in remaining_ts
+
+
+def test_prune_invalid_retention_raises(tmp_path: Path) -> None:
+    """prune(retention=0) raises BackupError (retention must be >= 1)."""
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = make_config(tmp_path, notes_db_dir=db_dir)
+    mgr = BackupManager(cfg)
+
+    with pytest.raises(BackupError, match="retention must be"):
+        mgr.prune(retention=0)
+
+
+def test_prune_rmtree_error_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """prune() logs a warning and continues (best-effort) when rmtree raises OSError."""
+    backup_dir = tmp_path / "bk"
+    timestamps = [datetime.datetime(2026, 6, 1, 10, 0, i) for i in range(3)]
+    make_backup_dirs(backup_dir, timestamps)
+
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = BackupConfig(notes_db_dir=db_dir, backup_dir=backup_dir, max_backups=1)
+    mgr = BackupManager(cfg)
+
+    # Monkeypatch shutil.rmtree in the backup module to raise OSError.
+    def failing_rmtree(path: Path, **kwargs: Any) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(shutil, "rmtree", failing_rmtree)
+
+    # prune should NOT raise; it returns the deleted list (best-effort).
+    deleted = mgr.prune(retention=1)
+    # 2 backups intended for deletion; both tracked even if rmtree failed.
+    assert len(deleted) == 2
