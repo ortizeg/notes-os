@@ -41,14 +41,14 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 
 ### PARA Routing
 
-- [ ] **ROUT-01**: User selects a top-level PARA category with a single keystroke (`P`/`A`/`R`/`X`/`S`/`?`), case-insensitive
-- [ ] **ROUT-02**: Archive routing (`X`) auto-resolves to the current-year subfolder, creating it if missing, with no further prompts
-- [ ] **ROUT-03**: Selecting Project/Area/Resource displays a numbered list of top-level folders
-- [ ] **ROUT-04**: User selects a folder by number + Enter
-- [ ] **ROUT-05**: Folders with subfolders prompt for subfolder selection (General listed first); folders without subfolders move immediately
-- [ ] **ROUT-06**: User can back out exactly one level with `[B]` at any selection state
-- [ ] **ROUT-07**: Skip (`S`) leaves the note in the inbox and advances; invalid input re-prompts with state unchanged
-- [ ] **ROUT-08**: Move confirmation shows the resolved PARA path (e.g. `Projects › Website Redesign › Research`)
+- [x] **ROUT-01**: User selects a top-level PARA category with a single keystroke (`P`/`A`/`R`/`X`/`S`/`?`), case-insensitive
+- [x] **ROUT-02**: Archive routing (`X`) auto-resolves to the current-year subfolder, creating it if missing, with no further prompts
+- [x] **ROUT-03**: Selecting Project/Area/Resource displays a numbered list of top-level folders
+- [x] **ROUT-04**: User selects a folder by number + Enter
+- [x] **ROUT-05**: Folders with subfolders prompt for subfolder selection (General listed first); folders without subfolders move immediately
+- [x] **ROUT-06**: User can back out exactly one level with `[B]` at any selection state
+- [x] **ROUT-07**: Skip (`S`) leaves the note in the inbox and advances; invalid input re-prompts with state unchanged
+- [x] **ROUT-08**: Move confirmation shows the resolved PARA path (e.g. `Projects › Website Redesign › Research`)
 
 ### Terminal UI
 
@@ -128,14 +128,14 @@ Which phases cover which requirements. Populated during roadmap creation.
 | BKUP-06 | Phase 3 — Backup | Pending |
 | CONF-01 | Phase 4 — Sorting Core | Complete |
 | CONF-02 | Phase 4 — Sorting Core | Complete |
-| ROUT-01 | Phase 4 — Sorting Core | Pending |
-| ROUT-02 | Phase 4 — Sorting Core | Pending |
-| ROUT-03 | Phase 4 — Sorting Core | Pending |
-| ROUT-04 | Phase 4 — Sorting Core | Pending |
-| ROUT-05 | Phase 4 — Sorting Core | Pending |
-| ROUT-06 | Phase 4 — Sorting Core | Pending |
-| ROUT-07 | Phase 4 — Sorting Core | Pending |
-| ROUT-08 | Phase 4 — Sorting Core | Pending |
+| ROUT-01 | Phase 4 — Sorting Core | Complete |
+| ROUT-02 | Phase 4 — Sorting Core | Complete |
+| ROUT-03 | Phase 4 — Sorting Core | Complete |
+| ROUT-04 | Phase 4 — Sorting Core | Complete |
+| ROUT-05 | Phase 4 — Sorting Core | Complete |
+| ROUT-06 | Phase 4 — Sorting Core | Complete |
+| ROUT-07 | Phase 4 — Sorting Core | Complete |
+| ROUT-08 | Phase 4 — Sorting Core | Complete |
 | UI-01 | Phase 4 — Sorting Core | Pending |
 | UI-02 | Phase 4 — Sorting Core | Pending |
 | UI-03 | Phase 4 — Sorting Core | Pending |

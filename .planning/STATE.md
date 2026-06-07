@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-06-07T22:00:16.070Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-06-07T22:09:41.847Z"
 last_activity: 2026-06-07 -- Phase 03 executed; BKUP-01 through BKUP-06 complete; ruff/mypy/pytest green; 103 unit tests (5 integration deselected in CI)
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 13
-  completed_plans: 9
+  completed_plans: 10
   percent: 50
 ---
 
@@ -60,6 +60,7 @@ Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 | Phase 03-backup P01 | - | 3 tasks | 3 files |
 | Phase 03-backup P02 | 35 minutes | 3 tasks | 3 files |
 | Phase 04-sorting-core P01 | 157 | 3 tasks | 3 files |
+| Phase 04-sorting-core P02 | 394 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -93,6 +94,9 @@ Recent decisions affecting current work:
 - [Phase ?]: SorterConfig composes BridgeConfig + BackupConfig as nested fields (CONF-02)
 - [Phase ?]: load_config raises ConfigError for malformed TOML; pydantic.ValidationError propagates for schema-invalid input (SC1 enforced)
 - [Phase ?]: notes_os.config added to mypy disallow_any_explicit=false override in pyproject.toml
+- [Phase ?]: Router is stateless between calls — all context passed explicitly as RouteResult + Note arguments; no shared mutable state
+- [Phase ?]: year_provider Callable injected on Router with default datetime.now().year — tests override for determinism (ROUT-02)
+- [Phase ?]: notes_os.sorter.router added to mypy override disallow_any_explicit=false — RouteResult BaseModel inherits explicit Any from Pydantic internals
 
 ### Pending Todos
 
@@ -105,6 +109,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T22:00:16.066Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-06-07T22:09:41.843Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None
