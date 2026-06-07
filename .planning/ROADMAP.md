@@ -108,7 +108,7 @@ Plans:
 
 Plans:
 
-- [ ] 04-01-PLAN.md — `config.py` — frozen Pydantic V2 SorterConfig composing BridgeConfig+BackupConfig, TOML loader + defaults, mypy override (wave 1)
+- [x] 04-01-PLAN.md — `config.py` — frozen Pydantic V2 SorterConfig composing BridgeConfig+BackupConfig, TOML loader + defaults, mypy override (wave 1)
 - [ ] 04-02-PLAN.md — `router.py` — UI-agnostic PARA routing state machine (SHOW_NOTE → AWAIT_CATEGORY → AWAIT_FOLDER → AWAIT_SUBFOLDER → CONFIRM_MOVE), archive auto-year (injected clock), `[B]` back, ≥95% coverage (wave 2)
 - [ ] 04-03-PLAN.md — `ui.py` — thin Rich/readchar layer: title + Markdown preview, single-keystroke capture, numbered choices, `?` help, inbox count, SortUIProtocol for fakes (wave 2)
 - [ ] 04-04-PLAN.md — `session.py` — moved/skipped/error tracking, frozen SessionSummary, log writer to `~/.notes-os/logs/YYYY-MM-DD_HHMMSS.log` (wave 3)
@@ -171,6 +171,6 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. Scaffold | 3/3 | Complete | 2026-06-07 |
 | 2. AppleScript Bridge | 3/3 | Complete   | 2026-06-07 |
 | 3. Backup | 2/2 | Complete | 2026-06-07 |
-| 4. Sorting Core | 0/5 | Not started | - |
+| 4. Sorting Core | 1/5 | In Progress|  |
 | 5. Task Extraction | 0/2 | Not started | - |
 | 6. Textual TUI Integration | 0/4 | Not started | - |

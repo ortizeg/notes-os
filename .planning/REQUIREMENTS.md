@@ -36,8 +36,8 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 
 ### Configuration
 
-- [ ] **CONF-01**: Config loads from `~/.notes-os/config.toml` when present and falls back to defaults otherwise
-- [ ] **CONF-02**: Config uses frozen Pydantic V2 models with validated fields (PARA folder names, inbox folder, preview length, archive, backup settings)
+- [x] **CONF-01**: Config loads from `~/.notes-os/config.toml` when present and falls back to defaults otherwise
+- [x] **CONF-02**: Config uses frozen Pydantic V2 models with validated fields (PARA folder names, inbox folder, preview length, archive, backup settings)
 
 ### PARA Routing
 
@@ -126,8 +126,8 @@ Which phases cover which requirements. Populated during roadmap creation.
 | BKUP-04 | Phase 3 — Backup | Pending |
 | BKUP-05 | Phase 3 — Backup | Pending |
 | BKUP-06 | Phase 3 — Backup | Pending |
-| CONF-01 | Phase 4 — Sorting Core | Pending |
-| CONF-02 | Phase 4 — Sorting Core | Pending |
+| CONF-01 | Phase 4 — Sorting Core | Complete |
+| CONF-02 | Phase 4 — Sorting Core | Complete |
 | ROUT-01 | Phase 4 — Sorting Core | Pending |
 | ROUT-02 | Phase 4 — Sorting Core | Pending |
 | ROUT-03 | Phase 4 — Sorting Core | Pending |

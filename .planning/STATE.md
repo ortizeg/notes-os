@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Completed 03-backup plan 02 (restore + prune + integration tests)
-last_updated: "2026-06-07T00:35:00Z"
-last_activity: 2026-06-07 -- Phase 03 fully executed on feat/backup; BackupManager.restore+prune (BKUP-04+05), backup.py 100% cov, integration test against tmp_path
+status: completed
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-06-07T22:00:16.070Z"
+last_activity: 2026-06-07 -- Phase 03 executed; BKUP-01 through BKUP-06 complete; ruff/mypy/pytest green; 103 unit tests (5 integration deselected in CI)
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
+  total_plans: 13
+  completed_plans: 9
   percent: 50
 ---
 
@@ -59,6 +59,7 @@ Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 | Phase 02-applescript-bridge P03 | 15 minutes | 3 tasks | 2 files |
 | Phase 03-backup P01 | - | 3 tasks | 3 files |
 | Phase 03-backup P02 | 35 minutes | 3 tasks | 3 files |
+| Phase 04-sorting-core P01 | 157 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,9 @@ Recent decisions affecting current work:
 - [Phase 03-backup]: import builtins inside TYPE_CHECKING block to fix mypy name-collision where self.list() shadowed builtin list[] in return type annotation under strict mode
 - [Phase 02-applescript-bridge]: RS/US delimiter constants: _FIELD_SEP=chr(31)/_RECORD_SEP=chr(30) for tamper-resistant AppleScript output parsing; plan 02-03 must import from notes.py
 - [Phase ?]: 100% notes.py coverage from mocked unit suite alone; sentinel tests patch _run_osascript not subprocess.run; MockNotesRepository imported under TYPE_CHECKING
+- [Phase ?]: SorterConfig composes BridgeConfig + BackupConfig as nested fields (CONF-02)
+- [Phase ?]: load_config raises ConfigError for malformed TOML; pydantic.ValidationError propagates for schema-invalid input (SC1 enforced)
+- [Phase ?]: notes_os.config added to mypy disallow_any_explicit=false override in pyproject.toml
 
 ### Pending Todos
 
@@ -101,6 +105,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T00:35:00Z
-Stopped at: Completed 03-backup plan 02 (restore + prune + integration tests)
+Last session: 2026-06-07T22:00:16.066Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None
