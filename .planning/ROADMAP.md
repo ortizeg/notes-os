@@ -132,7 +132,7 @@ Plans:
 
 Plans:
 
-- [ ] 05-01: `extractor.py` — heuristic regex/NLP scanner, action-item detection, off-by-default config gate
+- [x] 05-01: `extractor.py` — heuristic regex/NLP scanner, action-item detection, off-by-default config gate (completed 2026-06-07)
 - [ ] 05-02: Extraction UI — add-all / select-subset / skip interaction, Markdown file writer, tests
 
 ---
@@ -172,5 +172,5 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. AppleScript Bridge | 3/3 | Complete   | 2026-06-07 |
 | 3. Backup | 2/2 | Complete | 2026-06-07 |
 | 4. Sorting Core | 5/5 | Complete   | 2026-06-07 |
-| 5. Task Extraction | 0/2 | Not started | - |
+| 5. Task Extraction | 1/2 | In progress | - |
 | 6. Textual TUI Integration | 0/4 | Not started | - |
