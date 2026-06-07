@@ -58,13 +58,13 @@ Plans:
   4. Injecting a failing AppleScript stub raises `NotesError` / `FolderNotFoundError` / `NotesMoveError` and the session continues (no crash)
   5. `notes.py` passes mypy strict and achieves ≥95% branch coverage in CI
 
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 02-01: `notes.py` — `NotesRepositoryProtocol`, inbox read, PARA discovery, HTML strip + truncation
-- [ ] 02-02: `notes.py` — move note, ensure folder, typed error hierarchy, `MockNotesRepository` in conftest.py
-- [ ] 02-03: Bridge tests — unit suite (mock), integration suite (macOS, `_TestInbox`), 95% coverage gate
+- [ ] 02-01-PLAN.md — `models.py` + `notes.py`: `NotesRepositoryProtocol`, osascript wrapper, HTML strip, inbox read, PARA discovery (wave 1)
+- [ ] 02-02-PLAN.md — `notes.py` move/ensure-folder, `NotesError` hierarchy in exceptions.py, `MockNotesRepository` in conftest.py (wave 2, after 02-01)
+- [ ] 02-03-PLAN.md — Bridge tests: mocked unit suite (≥95% notes.py coverage) + macOS `_TestInbox` integration suite (wave 3)
 
 ---
 
