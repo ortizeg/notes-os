@@ -315,10 +315,14 @@ class TestRealEnsureFolder:
         try:
             # First call: create
             default_repo.ensure_folder((_TEST_TARGET,))
-            assert _folder_exists(_TEST_TARGET), f"{_TEST_TARGET!r} should exist after ensure_folder"
+            assert _folder_exists(_TEST_TARGET), (
+                f"{_TEST_TARGET!r} should exist after ensure_folder"
+            )
 
             # Second call: idempotent no-op (must not raise, must not duplicate)
             default_repo.ensure_folder((_TEST_TARGET,))
-            assert _folder_exists(_TEST_TARGET), f"{_TEST_TARGET!r} should still exist after second call"
+            assert _folder_exists(_TEST_TARGET), (
+                f"{_TEST_TARGET!r} should still exist after second call"
+            )
         finally:
             _delete_folder(_TEST_TARGET)
