@@ -59,9 +59,9 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 
 ### Session Tracking
 
-- [ ] **SESS-01**: Session tracks moved, skipped, and error counts during triage
-- [ ] **SESS-02**: Session end displays a summary of counts
-- [ ] **SESS-03**: Session log is written to `~/.notes-os/logs/YYYY-MM-DD_HHMMSS.log`
+- [x] **SESS-01**: Session tracks moved, skipped, and error counts during triage
+- [x] **SESS-02**: Session end displays a summary of counts
+- [x] **SESS-03**: Session log is written to `~/.notes-os/logs/YYYY-MM-DD_HHMMSS.log`
 
 ### Task Extraction (M1.5)
 
@@ -140,9 +140,9 @@ Which phases cover which requirements. Populated during roadmap creation.
 | UI-02 | Phase 4 — Sorting Core | Complete |
 | UI-03 | Phase 4 — Sorting Core | Complete |
 | UI-04 | Phase 4 — Sorting Core | Complete |
-| SESS-01 | Phase 4 — Sorting Core | Pending |
-| SESS-02 | Phase 4 — Sorting Core | Pending |
-| SESS-03 | Phase 4 — Sorting Core | Pending |
+| SESS-01 | Phase 4 — Sorting Core | Complete |
+| SESS-02 | Phase 4 — Sorting Core | Complete |
+| SESS-03 | Phase 4 — Sorting Core | Complete |
 | TASK-01 | Phase 5 — Task Extraction | Pending |
 | TASK-02 | Phase 5 — Task Extraction | Pending |
 | TASK-03 | Phase 5 — Task Extraction | Pending |

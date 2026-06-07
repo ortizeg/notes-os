@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-06-07T22:16:19.832Z"
-last_activity: 2026-06-07 -- Phase 03 executed; BKUP-01 through BKUP-06 complete; ruff/mypy/pytest green; 103 unit tests (5 integration deselected in CI)
+stopped_at: Completed 04-04-PLAN.md
+last_updated: "2026-06-07T22:38:00.000Z"
+last_activity: 2026-06-07 -- Phase 04 plan 04 executed; SESS-01/02/03 complete; SortSession + SessionSummary + write_log; 243 unit tests, 99.52% coverage
 progress:
   total_phases: 6
   completed_phases: 3
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-07)
 
 ## Current Position
 
-Phase: 03 (Backup) — COMPLETE ✓ (verified 6/6; backup.py 100% cov; overall 99.71%)
-Plan: 2 of 2 complete
-Status: Phase 3 done on feat/backup — BackupManager full API (create/list/restore/prune), BackingUpNotesRepository decorator, integration lifecycle test
-Last activity: 2026-06-07 -- Phase 03 executed; BKUP-01 through BKUP-06 complete; ruff/mypy/pytest green; 103 unit tests (5 integration deselected in CI)
+Phase: 04 (Sorting Core) — In Progress (4/5 plans complete)
+Plan: 4 of 5 complete
+Status: Phase 4 plan 04 done — SortSession + frozen SessionSummary + write_log; 243 tests, 99.52% cov; 1 plan remaining (04-05 controller)
+Last activity: 2026-06-07 -- Phase 04 plan 04 executed; SESS-01/02/03 complete; SortSession + SessionSummary + write_log; 243 unit tests, 99.52% coverage
 
 Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 
@@ -62,6 +62,7 @@ Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 | Phase 04-sorting-core P01 | 157 | 3 tasks | 3 files |
 | Phase 04-sorting-core P02 | 394 | 3 tasks | 3 files |
 | Phase 04-sorting-core P03 | 218 | 2 tasks | 3 files |
+| Phase 04-sorting-core P04 | ~8 min | 2 tasks (TDD) | 3 files |
 
 ## Accumulated Context
 
@@ -101,6 +102,10 @@ Recent decisions affecting current work:
 - [Phase 04-sorting-core]: notes_os.sorter.ui added to mypy disallow_any_explicit=false override — Any intentional for duck-typed note/summary params in SortUIProtocol
 - [Phase 04-sorting-core]: RichSortUI uses injectable Console/key_reader/line_reader — tests never block on real terminal I/O (Protocol-Seam + Injectable-IO patterns)
 - [Phase 04-sorting-core]: show_summary(summary: Any) uses duck-typed attribute access for forward-compat 04-04 SessionSummary seam; falls back to str()
+- [Phase 04-sorting-core]: SortSession is a plain mutable class (not Pydantic); only SessionSummary snapshot is frozen — mutable-accumulator + immutable-snapshot pattern
+- [Phase 04-sorting-core]: write_log clock injected via optional `now: datetime | None = None` kwarg — avoids frozen-default anti-pattern; tests pass fixed datetime
+- [Phase 04-sorting-core]: SessionSummary.total is a @property (moved+skipped+errors) — not stored; stays correct without a second mutation surface
+- [Phase 04-sorting-core]: notes_os.sorter.session added to pyproject.toml mypy disallow_any_explicit=false override (SessionSummary inherits BaseModel Any API)
 
 ### Pending Todos
 
