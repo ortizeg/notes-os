@@ -1,21 +1,17 @@
 """Frozen Pydantic V2 data models for the NotesOS AppleScript bridge.
 
 Defines the typed contract surface for note data and PARA structure returned
-by the AppleScript bridge.  All models are frozen (immutable after construction)
-to prevent accidental mutation across the sort session.
-
-Uses ``pydantic.dataclasses`` (Pydantic V2) rather than ``BaseModel`` because
-mypy 2.x ``disallow_any_explicit`` does not interact well with ``BaseModel``
-inheritance; ``pydantic.dataclasses`` provide identical validation, freezing,
-and field constraint behaviour with full mypy strict compatibility.
+by the AppleScript bridge.  All models are frozen ``BaseModel`` subclasses
+(immutable after construction) to prevent accidental mutation across the sort
+session.  The ``pydantic.mypy`` plugin (configured in ``pyproject.toml``) keeps
+``BaseModel`` fully compatible with the project's strict mypy settings.
 """
 
 from __future__ import annotations
 
 from typing import TypeAlias
 
-from pydantic import ConfigDict, Field
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict, Field
 
 
 FolderPath: TypeAlias = tuple[str, ...]
@@ -28,8 +24,7 @@ Example:
 """
 
 
-@dataclass(config=ConfigDict(frozen=True))
-class Note:
+class Note(BaseModel):
     """An Apple Notes note surfaced to the sort session.
 
     Attributes:
@@ -45,14 +40,15 @@ class Note:
             repository; kept as a stored field so the Protocol remains I/O-free.
     """
 
+    model_config = ConfigDict(frozen=True)
+
     id: str
     title: str
     body: str
     preview: str
 
 
-@dataclass(config=ConfigDict(frozen=True))
-class ParaStructure:
+class ParaStructure(BaseModel):
     """Snapshot of the PARA folder hierarchy discovered in Apple Notes at runtime.
 
     Attributes:
@@ -62,6 +58,8 @@ class ParaStructure:
             child folder names discovered at query time.  Roots with no
             children map to an empty tuple.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     roots: tuple[str, ...]
     subfolders: dict[str, tuple[str, ...]]
@@ -79,8 +77,7 @@ class ParaStructure:
         return self.subfolders.get(root, ())
 
 
-@dataclass(config=ConfigDict(frozen=True))
-class BridgeConfig:
+class BridgeConfig(BaseModel):
     """Minimal configuration surface required by the AppleScript bridge in Phase 2.
 
     Only bridge-relevant settings live here.  Full application config (backup
@@ -95,6 +92,8 @@ class BridgeConfig:
         para_folders: Ordered tuple of PARA root folder names to discover in
             Apple Notes.  Defaults to the canonical PARA order.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     inbox_folder: str = "Notes"
     preview_length: int = Field(default=250, ge=50, le=1000)

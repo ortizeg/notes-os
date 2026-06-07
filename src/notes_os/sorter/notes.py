@@ -371,8 +371,7 @@ end tell"""
         """
         # Build AppleScript root-list literal from config (names are AppleScript-escaped).
         roots_literal = ", ".join(
-            f'"{r.replace(chr(34), chr(34) + chr(34))}"'
-            for r in self._config.para_folders
+            f'"{r.replace(chr(34), chr(34) + chr(34))}"' for r in self._config.para_folders
         )
         script = f"""\
 tell application "Notes"
