@@ -104,15 +104,15 @@ Plans:
   4. Move confirmation displays the full resolved PARA path (e.g. `Projects › Website Redesign › Research`) before the backup-then-move executes
   5. After the session, a summary shows moved/skipped/error counts and a log file is written to `~/.notes-os/logs/YYYY-MM-DD_HHMMSS.log`
 
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
 
-- [ ] 04-01: `config.py` — frozen Pydantic V2 models, TOML loader, sensible defaults, mypy strict
-- [ ] 04-02: `router.py` — PARA routing state machine (SHOW_NOTE → AWAIT_CATEGORY → AWAIT_FOLDER → AWAIT_SUBFOLDER → CONFIRM_MOVE), archive auto-year, `[B]` back, 95% coverage
-- [ ] 04-03: `ui.py` — note title + Markdown preview (HTML-stripped, configurable length), single-keystroke capture (readchar), inbox count display, `?` inline help
-- [ ] 04-04: `session.py` — moved/skipped/error tracking, end-of-session summary, log file writer
-- [ ] 04-05: Integration — wire config + router + ui + session into end-to-end CLI sort flow, full test suite
+- [ ] 04-01-PLAN.md — `config.py` — frozen Pydantic V2 SorterConfig composing BridgeConfig+BackupConfig, TOML loader + defaults, mypy override (wave 1)
+- [ ] 04-02-PLAN.md — `router.py` — UI-agnostic PARA routing state machine (SHOW_NOTE → AWAIT_CATEGORY → AWAIT_FOLDER → AWAIT_SUBFOLDER → CONFIRM_MOVE), archive auto-year (injected clock), `[B]` back, ≥95% coverage (wave 2)
+- [ ] 04-03-PLAN.md — `ui.py` — thin Rich/readchar layer: title + Markdown preview, single-keystroke capture, numbered choices, `?` help, inbox count, SortUIProtocol for fakes (wave 2)
+- [ ] 04-04-PLAN.md — `session.py` — moved/skipped/error tracking, frozen SessionSummary, log writer to `~/.notes-os/logs/YYYY-MM-DD_HHMMSS.log` (wave 3)
+- [ ] 04-05-PLAN.md — Integration — SortController wiring config + backing-up repo + router + ui + session into an end-to-end testable sort flow + full suite (wave 4)
 
 ---
 
