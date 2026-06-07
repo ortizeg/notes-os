@@ -328,12 +328,15 @@ class TestShowSummary:
 
         console = _recording_console()
         ui = RichSortUI(console=console)
-        summary = SimpleNamespace(moved=5, skipped=2, total=7)
+        summary = SimpleNamespace(moved=5, skipped=2, errors=1, total=8)
         ui.show_summary(summary)
         text = console.export_text()
         assert "5" in text
         assert "2" in text
-        assert "7" in text
+        assert "8" in text
+        # SESS-02 / SC5: the errors count must be shown to the user, not just logged.
+        assert "Errors" in text
+        assert "1" in text
 
     def test_renders_fallback_for_unknown_summary(self) -> None:
         console = _recording_console()

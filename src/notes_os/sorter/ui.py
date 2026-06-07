@@ -312,11 +312,13 @@ class RichSortUI:
         try:
             moved = summary.moved
             skipped = summary.skipped
+            errors = summary.errors
             total = summary.total
             self._console.print(
                 f"[bold]Session complete.[/bold]  "
                 f"Moved: [green]{moved}[/green]  "
                 f"Skipped: [yellow]{skipped}[/yellow]  "
+                f"Errors: [red]{errors}[/red]  "
                 f"Total: {total}"
             )
         except AttributeError:
