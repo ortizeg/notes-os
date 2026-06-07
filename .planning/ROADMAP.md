@@ -86,7 +86,7 @@ Plans:
 
 Plans:
 
-- [ ] 03-01: `backup.py` — auto-backup-before-write hook, create/list, `BackupError`, 95% coverage
+- [x] 03-01: `backup.py` — auto-backup-before-write hook, create/list, `BackupError`, 95% coverage
 - [ ] 03-02: `backup.py` — restore, prune (retention=10 default), integration + unit tests
 
 ---
