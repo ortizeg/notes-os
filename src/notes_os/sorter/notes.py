@@ -32,7 +32,7 @@ import subprocess
 from html.parser import HTMLParser
 from typing import Protocol, runtime_checkable
 
-from notes_os.exceptions import NotesError
+from notes_os.exceptions import FolderNotFoundError, NotesError, NotesMoveError
 from notes_os.sorter.models import BridgeConfig, FolderPath, Note, ParaStructure
 
 
@@ -432,30 +432,132 @@ end tell"""
         )
 
     # ------------------------------------------------------------------
-    # Write operation placeholders (implemented in plan 02-02)
+    # Write operations (BRDG-03, BRDG-04)
     # ------------------------------------------------------------------
+
+    def _folder_reference(self, folder_path: FolderPath) -> str:
+        """Build an AppleScript folder reference from an ordered path tuple.
+
+        Converts a ``FolderPath`` tuple (root-first) into the nested AppleScript
+        ``folder X of folder Y of ...`` expression used to address a folder in
+        the Notes application.  Folder names containing double-quotes are escaped
+        by doubling them (standard AppleScript string escaping).
+
+        For a 2-level path ``("Projects", "Web")`` the result is::
+
+            folder "Web" of folder "Projects"
+
+        For a 3-level path ``("Projects", "Web", "Research")`` the result is::
+
+            folder "Research" of folder "Web" of folder "Projects"
+
+        Args:
+            folder_path: Ordered tuple of folder names, root first.  Must have
+                at least one element.
+
+        Returns:
+            An AppleScript expression string addressing the target folder.
+        """
+        # AppleScript-escape double-quotes by doubling them (T-02-04 mitigation).
+        escaped = [name.replace('"', '""') for name in folder_path]
+        # Build the reference from deepest (last) to shallowest (first).
+        parts = [f'folder "{name}"' for name in reversed(escaped)]
+        return " of ".join(parts)
 
     def move_note(self, note_id: str, folder_path: FolderPath) -> None:
         """Move a note to the specified folder path.
 
+        Resolves the destination ``folder_path`` to an AppleScript reference,
+        verifies that the folder exists, verifies the note exists by ID, then
+        issues the ``move`` command.  Sentinel error tokens in the osascript
+        output are mapped to typed exceptions.
+
+        Note:
+            Does NOT create the destination folder — caller must call
+            ``ensure_folder`` first.  This separation prevents accidental folder
+            creation on a typo'd path (T-02-05 mitigation).
+
         Args:
-            note_id: The opaque Apple Notes note identifier.
+            note_id: The opaque Apple Notes note identifier
+                (e.g. ``"x-coredata://..."``) used to address the note.
             folder_path: Ordered tuple of folder names describing the
                 destination (e.g. ``("Projects", "NotesOS")``).
 
+        Returns:
+            None on success.
+
         Raises:
-            NotImplementedError: This method is implemented in plan 02-02.
+            FolderNotFoundError: If the destination folder path does not exist
+                in the Notes folder hierarchy.
+            NotesMoveError: If the note with ``note_id`` cannot be found.
+            NotesError: If osascript exits with a non-zero return code for any
+                other reason.
         """
-        raise NotImplementedError("Implemented in plan 02-02")
+        folder_ref = self._folder_reference(folder_path)
+        # Escape the note_id for AppleScript (opaque CoreData URI — double any quotes).
+        escaped_id = note_id.replace('"', '""')
+        script = f"""\
+tell application "Notes"
+    if not (exists {folder_ref}) then
+        error "FOLDER_NOT_FOUND"
+    end if
+    if not (exists note id "{escaped_id}") then
+        error "NOTE_NOT_FOUND"
+    end if
+    move note id "{escaped_id}" to {folder_ref}
+    return "OK"
+end tell"""
+        try:
+            self._run_osascript(script)
+        except NotesError as exc:
+            msg = str(exc)
+            if "FOLDER_NOT_FOUND" in msg:
+                raise FolderNotFoundError(folder_path) from exc
+            if "NOTE_NOT_FOUND" in msg:
+                raise NotesMoveError(note_id) from exc
+            raise
 
     def ensure_folder(self, folder_path: FolderPath) -> None:
         """Create a folder (and any missing ancestors) if it does not exist.
 
+        Idempotently ensures each prefix of ``folder_path`` exists in the Notes
+        folder hierarchy.  Existing levels are left untouched; missing levels are
+        created in order from the shallowest to the deepest.  Calling this method
+        on a fully-existing path is a no-op (no duplicate folders created).
+
         Args:
             folder_path: Ordered tuple of folder names to create if absent
-                (e.g. ``("Archive", "2026")``).
+                (e.g. ``("Archive", "2026")``).  Each element represents one
+                nesting level starting from a top-level Notes folder.
+
+        Returns:
+            None on success.
 
         Raises:
-            NotImplementedError: This method is implemented in plan 02-02.
+            NotesError: If osascript exits with a non-zero return code.
         """
-        raise NotImplementedError("Implemented in plan 02-02")
+        # Build one AppleScript statement per path prefix, guarded by an
+        # existence check so existing levels are never duplicated.
+        statements: list[str] = []
+        for depth in range(1, len(folder_path) + 1):
+            prefix = folder_path[:depth]
+            folder_ref = self._folder_reference(prefix)
+            escaped_name = prefix[-1].replace('"', '""')
+            if depth == 1:
+                # Top-level folder: create at the application level.
+                statements.append(
+                    f"    if not (exists {folder_ref}) then\n"
+                    f'        make new folder with properties {{name:"{escaped_name}"}}\n'
+                    f"    end if"
+                )
+            else:
+                # Nested folder: create inside the parent.
+                parent_ref = self._folder_reference(prefix[:-1])
+                statements.append(
+                    f"    if not (exists {folder_ref}) then\n"
+                    f'        make new folder with properties {{name:"{escaped_name}"}} at {parent_ref}\n'
+                    f"    end if"
+                )
+        body = "\n".join(statements)
+        script = f'tell application "Notes"\n{body}\nend tell'
+        self._run_osascript(script)
