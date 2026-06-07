@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-07)
 
 **Core value:** A person can triage their Apple Notes inbox into PARA folders with single keystrokes — fast, mouse-free, and non-destructive — with the Notes database backed up before every write.
-**Current focus:** Phase 02 — AppleScript Bridge (next)
+**Current focus:** Phase 03 — Backup (next)
 
 ## Current Position
 
-Phase: 01 (scaffold) — COMPLETE ✓ (verified 5/5, 1 gap closed)
+Phase: 02 (AppleScript Bridge) — COMPLETE ✓ (verified 5/5; notes.py 100% cov)
 Plan: 3 of 3 complete
-Status: Phase 1 done — ready to plan Phase 2
-Last activity: 2026-06-07 -- Phase 01 executed on feat/repo-scaffold; CI gates green (ruff/mypy/pytest 100% cov); gap (coverage gate) resolved
+Status: Phase 2 done on feat/applescript-bridge (stacked on main) — ready to open PR #2 and plan Phase 3
+Last activity: 2026-06-07 -- Phase 02 executed; BaseModel standardized (pydantic.mypy plugin); ruff/mypy/pytest green; 57 unit + 4 integration tests
 
-Progress: [██░░░░░░░░] 17% (1 of 6 phases complete)
+Progress: [███░░░░░░░] 33% (2 of 6 phases complete)
 
 ## Performance Metrics
 

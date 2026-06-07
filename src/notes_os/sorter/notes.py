@@ -1,12 +1,10 @@
-"""Apple Notes AppleScript bridge — read operations and protocol contract.
+"""Apple Notes AppleScript bridge — protocol contract and read/write operations.
 
 Provides the ``NotesRepositoryProtocol`` interface that every caller (router,
 UI, session, TUI) uses instead of raw AppleScript, plus the
-``AppleScriptNotesRepository`` implementation for the read side of the bridge
-(``get_inbox_notes``, ``get_para_structure``).
-
-Write operations (``move_note``, ``ensure_folder``) are declared on the protocol
-and stubbed as ``NotImplementedError`` placeholders; plan 02-02 fills their bodies.
+``AppleScriptNotesRepository`` implementation covering both the read side
+(``get_inbox_notes``, ``get_para_structure``) and the write side
+(``move_note``, ``ensure_folder``) of the bridge.
 
 Delimiter constants
 -------------------
