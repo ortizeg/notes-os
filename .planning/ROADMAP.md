@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: AppleScript Bridge** — Read inbox, discover PARA structure, move note, ensure folder, typed errors, NotesRepositoryProtocol (completed 2026-06-07)
 - [x] **Phase 3: Backup** — Auto-backup-before-write, create/list/restore/prune, BackupError (completed 2026-06-07)
 - [x] **Phase 4: Sorting Core** — Config (Pydantic V2), PARA router state machine, terminal UI primitives, session tracking (completed 2026-06-07)
-- [ ] **Phase 5: Task Extraction** — Heuristic action-item scanner, user selection, Markdown output, off by default
+- [x] **Phase 5: Task Extraction** — Heuristic action-item scanner, user selection, Markdown output, off by default (completed 2026-06-07)
 - [ ] **Phase 6: Textual TUI Integration** — Full Textual app wired end-to-end via `notes` entry point
 
 ## Phase Details
@@ -133,7 +133,7 @@ Plans:
 Plans:
 
 - [x] 05-01: `extractor.py` — heuristic regex/NLP scanner, action-item detection, off-by-default config gate (completed 2026-06-07)
-- [ ] 05-02: Extraction UI — add-all / select-subset / skip interaction, Markdown file writer, tests
+- [x] 05-02: Extraction UI — add-all / select-subset / skip interaction, Markdown file writer, tests
 
 ---
 
@@ -172,5 +172,5 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. AppleScript Bridge | 3/3 | Complete   | 2026-06-07 |
 | 3. Backup | 2/2 | Complete | 2026-06-07 |
 | 4. Sorting Core | 5/5 | Complete   | 2026-06-07 |
-| 5. Task Extraction | 1/2 | In progress | - |
+| 5. Task Extraction | 2/2 | Complete   | 2026-06-07 |
 | 6. Textual TUI Integration | 0/4 | Not started | - |

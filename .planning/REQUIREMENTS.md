@@ -66,9 +66,9 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 ### Task Extraction (M1.5)
 
 - [ ] **TASK-01**: After routing a note, a heuristic scan surfaces action items, named commitments, and inline dates (when enabled)
-- [ ] **TASK-02**: User can add all, select a subset, or skip the extracted tasks
-- [ ] **TASK-03**: Tasks are written as Markdown checkboxes to `~/.notes-os/extracted-tasks/YYYY-MM-DD.md`
-- [ ] **TASK-04**: Feature is off by default and enabled via `[features] task_extraction = true`
+- [x] **TASK-02**: User can add all, select a subset, or skip the extracted tasks
+- [x] **TASK-03**: Tasks are written as Markdown checkboxes to `~/.notes-os/extracted-tasks/YYYY-MM-DD.md`
+- [x] **TASK-04**: Feature is off by default and enabled via `[features] task_extraction = true`
 
 ### Textual TUI Application
 
@@ -144,9 +144,9 @@ Which phases cover which requirements. Populated during roadmap creation.
 | SESS-02 | Phase 4 — Sorting Core | Complete |
 | SESS-03 | Phase 4 — Sorting Core | Complete |
 | TASK-01 | Phase 5 — Task Extraction | Pending |
-| TASK-02 | Phase 5 — Task Extraction | Pending |
-| TASK-03 | Phase 5 — Task Extraction | Pending |
-| TASK-04 | Phase 5 — Task Extraction | Pending |
+| TASK-02 | Phase 5 — Task Extraction | Complete |
+| TASK-03 | Phase 5 — Task Extraction | Complete |
+| TASK-04 | Phase 5 — Task Extraction | Complete |
 | TUI-01 | Phase 6 — Textual TUI Integration | Pending |
 | TUI-02 | Phase 6 — Textual TUI Integration | Pending |
 | TUI-03 | Phase 6 — Textual TUI Integration | Pending |
