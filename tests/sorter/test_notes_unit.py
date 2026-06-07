@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from notes_os.exceptions import NotesError
+from notes_os.exceptions import FolderNotFoundError, NotesError, NotesMoveError, NotesOSError
 from notes_os.sorter.models import BridgeConfig, Note, ParaStructure
 from notes_os.sorter.notes import (
     _FIELD_SEP,
@@ -468,3 +468,280 @@ class TestProtocolReadViaMock:
             mock_run.assert_not_called()
 
         assert structure.roots == sample_structure.roots
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap helpers — lines 332 and 420 (empty record skip branches)
+# ---------------------------------------------------------------------------
+
+
+class TestCoverageGaps:
+    """Additional tests to hit coverage-gap branches in get_inbox_notes and get_para_structure."""
+
+    def test_get_inbox_notes_skips_empty_records_in_multi_record_stdout(self) -> None:
+        """Empty records interspersed in stdout are skipped (line 332 branch)."""
+        repo = _default_repo()
+        # A trailing _RECORD_SEP creates an empty trailing record
+        good = f"id1{_FIELD_SEP}Title{_FIELD_SEP}body"
+        stdout = good + _RECORD_SEP  # trailing separator → empty record at end
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            notes = repo.get_inbox_notes()
+
+        assert len(notes) == 1
+        assert notes[0].id == "id1"
+
+    def test_get_para_structure_skips_empty_records_in_stdout(self) -> None:
+        """Empty records (from trailing separator) are skipped in get_para_structure (line 420 branch)."""
+        repo = _default_repo()
+        stdout = f"Projects{_FIELD_SEP}Web{_RECORD_SEP}"  # trailing sep → empty record
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            structure = repo.get_para_structure()
+
+        assert "Projects" in structure.roots
+        assert structure.subfolders_for("Projects") == ("Web",)
+
+
+# ---------------------------------------------------------------------------
+# move_note — subprocess mocked
+# ---------------------------------------------------------------------------
+
+
+class TestMoveNote:
+    """Tests for AppleScriptNotesRepository.move_note."""
+
+    def test_2_level_path_success(self) -> None:
+        """move_note with a 2-level path calls osascript and succeeds."""
+        repo = _default_repo()
+        with patch("notes_os.sorter.notes.subprocess.run", return_value=_make_run_result()) as mock_run:
+            repo.move_note("note-id-123", ("Projects", "Web"))
+
+        assert mock_run.call_count == 1
+        # The script arg is the third element of the osascript call list
+        script = mock_run.call_args[0][0][2]  # ["osascript", "-e", script]
+        assert 'folder "Web" of folder "Projects"' in script
+
+    def test_3_level_path_success(self) -> None:
+        """move_note with a 3-level path builds the correct nested folder reference."""
+        repo = _default_repo()
+        with patch("notes_os.sorter.notes.subprocess.run", return_value=_make_run_result()) as mock_run:
+            repo.move_note("note-id-456", ("Projects", "Web", "Research"))
+
+        script = mock_run.call_args[0][0][2]
+        assert 'folder "Research" of folder "Web" of folder "Projects"' in script
+
+    def test_success_returns_none(self) -> None:
+        """move_note returns None on success."""
+        repo = _default_repo()
+        with patch("notes_os.sorter.notes.subprocess.run", return_value=_make_run_result()):
+            result = repo.move_note("note-id", ("Projects",))
+
+        assert result is None
+
+    def test_folder_not_found_sentinel_raises_folder_not_found_error(self) -> None:
+        """FOLDER_NOT_FOUND sentinel in osascript error → FolderNotFoundError."""
+        repo = _default_repo()
+        # Patch _run_osascript to raise NotesError with the sentinel token
+        with patch.object(
+            AppleScriptNotesRepository,
+            "_run_osascript",
+            side_effect=NotesError("Notes got an error: FOLDER_NOT_FOUND"),
+        ), pytest.raises(FolderNotFoundError):
+            repo.move_note("note-id", ("Projects", "NonExistent"))
+
+    def test_note_not_found_sentinel_raises_notes_move_error(self) -> None:
+        """NOTE_NOT_FOUND sentinel in osascript error → NotesMoveError."""
+        repo = _default_repo()
+        with patch.object(
+            AppleScriptNotesRepository,
+            "_run_osascript",
+            side_effect=NotesError("Notes got an error: NOTE_NOT_FOUND"),
+        ), pytest.raises(NotesMoveError):
+            repo.move_note("bad-note-id", ("Projects",))
+
+    def test_other_non_zero_raises_notes_error(self) -> None:
+        """A non-zero exit for reasons other than sentinels raises plain NotesError."""
+        repo = _default_repo()
+        with (
+            patch(
+                "notes_os.sorter.notes.subprocess.run",
+                return_value=_make_run_result(returncode=1, stderr="unexpected error"),
+            ),
+            pytest.raises(NotesError),
+        ):
+            repo.move_note("note-id", ("Projects",))
+
+    def test_move_note_does_not_call_ensure_folder(self) -> None:
+        """move_note must NOT call ensure_folder internally."""
+        repo = _default_repo()
+        with (
+            patch("notes_os.sorter.notes.subprocess.run", return_value=_make_run_result()),
+            patch.object(AppleScriptNotesRepository, "ensure_folder") as mock_ensure,
+        ):
+            repo.move_note("note-id", ("Projects",))
+            mock_ensure.assert_not_called()
+
+    def test_folder_not_found_error_is_notes_os_error_subclass(self) -> None:
+        """FolderNotFoundError is a NotesOSError so callers can catch the root type."""
+        repo = _default_repo()
+        with patch.object(
+            AppleScriptNotesRepository,
+            "_run_osascript",
+            side_effect=NotesError("FOLDER_NOT_FOUND"),
+        ), pytest.raises(NotesOSError):
+            repo.move_note("note-id", ("Archive",))
+
+    def test_notes_move_error_is_notes_os_error_subclass(self) -> None:
+        """NotesMoveError is a NotesOSError so callers can catch the root type."""
+        repo = _default_repo()
+        with patch.object(
+            AppleScriptNotesRepository,
+            "_run_osascript",
+            side_effect=NotesError("NOTE_NOT_FOUND"),
+        ), pytest.raises(NotesOSError):
+            repo.move_note("note-id", ("Projects",))
+
+
+# ---------------------------------------------------------------------------
+# ensure_folder — subprocess mocked
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureFolder:
+    """Tests for AppleScriptNotesRepository.ensure_folder."""
+
+    def test_creates_missing_top_level_folder(self) -> None:
+        """ensure_folder calls osascript with a make-folder script for a missing folder."""
+        repo = _default_repo()
+        with patch("notes_os.sorter.notes.subprocess.run", return_value=_make_run_result()) as mock_run:
+            repo.ensure_folder(("Archive",))
+
+        script = mock_run.call_args[0][0][2]
+        assert "Archive" in script
+        assert "make new folder" in script
+
+    def test_idempotent_no_op_when_folder_exists(self) -> None:
+        """ensure_folder succeeds without error when the folder already exists (mocked as OK)."""
+        repo = _default_repo()
+        # osascript returns success regardless (the 'if not exists' guard is in AppleScript)
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(),
+        ) as mock_run:
+            repo.ensure_folder(("Projects",))
+            repo.ensure_folder(("Projects",))
+
+        # Called twice (two calls → two osascript invocations, both succeed)
+        assert mock_run.call_count == 2
+
+    def test_nested_folder_path(self) -> None:
+        """ensure_folder for a 2-level path produces a script with nested make-folder statements."""
+        repo = _default_repo()
+        with patch("notes_os.sorter.notes.subprocess.run", return_value=_make_run_result()) as mock_run:
+            repo.ensure_folder(("Archive", "2026"))
+
+        script = mock_run.call_args[0][0][2]
+        assert "Archive" in script
+        assert "2026" in script
+        assert "make new folder" in script
+
+    def test_non_zero_returncode_raises_notes_error(self) -> None:
+        """Non-zero returncode from osascript raises NotesError."""
+        repo = _default_repo()
+        with (
+            patch(
+                "notes_os.sorter.notes.subprocess.run",
+                return_value=_make_run_result(returncode=1, stderr="access denied"),
+            ),
+            pytest.raises(NotesError),
+        ):
+            repo.ensure_folder(("Archive",))
+
+
+# ---------------------------------------------------------------------------
+# SC4: Failing-stub resilience — NotesOSError-catchable
+# ---------------------------------------------------------------------------
+
+
+class TestFailingStubResilience:
+    """SC4 proof: a failing osascript stub raises typed errors catchable as NotesOSError."""
+
+    @staticmethod
+    def _failing_run(*args: object, **kwargs: object) -> types.SimpleNamespace:
+        """Always returns a non-zero result simulating a complete osascript failure."""
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="simulated failure")
+
+    def test_notes_error_is_notes_os_error_subclass(self) -> None:
+        """NotesError is a NotesOSError subclass so the caller can use a single except clause."""
+        assert issubclass(NotesError, NotesOSError)
+
+    def test_folder_not_found_error_hierarchy(self) -> None:
+        """FolderNotFoundError inherits from NotesError and NotesOSError."""
+        assert issubclass(FolderNotFoundError, NotesError)
+        assert issubclass(FolderNotFoundError, NotesOSError)
+
+    def test_notes_move_error_hierarchy(self) -> None:
+        """NotesMoveError inherits from NotesError and NotesOSError."""
+        assert issubclass(NotesMoveError, NotesError)
+        assert issubclass(NotesMoveError, NotesOSError)
+
+    def test_failing_osascript_raises_typed_error_and_session_continues(self) -> None:
+        """A failing osascript raises NotesOSError; catching it allows the session to continue (SC4)."""
+        repo = _default_repo()
+        session_continued = False
+
+        with patch("notes_os.sorter.notes.subprocess.run", side_effect=self._failing_run):
+            try:
+                repo.get_inbox_notes()
+            except NotesOSError:
+                session_continued = True
+
+        assert session_continued, "Session must continue after catching NotesOSError"
+
+    def test_move_note_failure_catchable_as_notes_os_error(self) -> None:
+        """move_note failure (non-zero) is catchable as NotesOSError; session continues."""
+        repo = _default_repo()
+        session_continued = False
+
+        with patch("notes_os.sorter.notes.subprocess.run", side_effect=self._failing_run):
+            try:
+                repo.move_note("any-id", ("Projects",))
+            except NotesOSError:
+                session_continued = True
+
+        assert session_continued
+
+    def test_ensure_folder_failure_catchable_as_notes_os_error(self) -> None:
+        """ensure_folder failure is catchable as NotesOSError; session continues."""
+        repo = _default_repo()
+        session_continued = False
+
+        with patch("notes_os.sorter.notes.subprocess.run", side_effect=self._failing_run):
+            try:
+                repo.ensure_folder(("Archive",))
+            except NotesOSError:
+                session_continued = True
+
+        assert session_continued
+
+    def test_folder_not_found_catchable_via_notes_os_error(self) -> None:
+        """FolderNotFoundError from move_note is catchable as NotesOSError (SC4 typed hierarchy)."""
+        repo = _default_repo()
+        caught_type: type | None = None
+
+        with patch.object(
+            AppleScriptNotesRepository,
+            "_run_osascript",
+            side_effect=NotesError("FOLDER_NOT_FOUND"),
+        ):
+            try:
+                repo.move_note("note-id", ("NonExistent",))
+            except NotesOSError as exc:
+                caught_type = type(exc)
+
+        assert caught_type is FolderNotFoundError
