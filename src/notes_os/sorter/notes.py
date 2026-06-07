@@ -301,9 +301,7 @@ class AppleScriptNotesRepository:
             NotesOSError: On non-zero osascript exit code.
                 (02-02: narrow to NotesError)
         """
-        inbox = self._config.inbox_folder.replace('"', '""')  # AppleScript-escape
-        fs = _FIELD_SEP
-        rs = _RECORD_SEP
+        inbox = self._config.inbox_folder.replace('"', '""')  # AppleScript-escape double-quotes
         script = f"""\
 tell application "Notes"
     set fs to (ASCII character 31)
@@ -323,21 +321,22 @@ tell application "Notes"
     end repeat
     return output
 end tell"""
-        # Unused fs/rs Python vars kept for readability; AppleScript uses chr() calls
-        _ = fs
-        _ = rs
         stdout = self._run_osascript(script)
         if not stdout or not stdout.strip():
             return []
 
         notes: list[Note] = []
         for record in stdout.split(_RECORD_SEP):
-            record = record.strip()
-            if not record:
+            # Do NOT strip the record: trailing _FIELD_SEP marks an empty body field.
+            # Only skip records that contain no non-whitespace characters at all.
+            if not record or not record.strip():
                 continue
             parts = record.split(_FIELD_SEP, 2)
             if len(parts) != 3:
-                logger.warning("Skipping malformed note record (expected 3 fields, got %d)", len(parts))
+                logger.warning(
+                    "Skipping malformed note record (expected 3 fields, got %d)",
+                    len(parts),
+                )
                 continue
             note_id, title, body = parts
             notes.append(
@@ -420,8 +419,7 @@ end tell"""
 
         if stdout and stdout.strip():
             for record in stdout.split(_RECORD_SEP):
-                record = record.strip()
-                if not record:
+                if not record or not record.strip():
                     continue
                 parts = record.split(_FIELD_SEP, 1)
                 root_name = parts[0].strip()
