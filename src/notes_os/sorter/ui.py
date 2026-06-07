@@ -33,6 +33,8 @@ from rich.text import Text
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from notes_os.sorter.extractor import ExtractedTask
+
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +124,38 @@ class SortUIProtocol(Protocol):
         Args:
             summary: A session summary object (duck-typed; will be
                 ``SessionSummary`` in plan 04-04).
+        """
+        ...
+
+    def prompt_task_selection(self, tasks: Sequence[ExtractedTask]) -> list[ExtractedTask]:
+        """Present extracted tasks and let the user choose which to save.
+
+        Renders the PRD task-selection format:
+
+        .. code-block:: text
+
+            Potential tasks found:
+              1. <task one>
+              2. <task two>
+            [A] Add all   [S] Select   [X] Skip
+
+        Then reads a single keystroke:
+
+        - ``'a'`` / ``'A'``: returns all tasks.
+        - ``'x'`` / ``'X'``: returns ``[]`` (nothing saved).
+        - ``'s'`` / ``'S'``: prompts for space/comma-separated 1-based numbers;
+          returns the selected tasks in input order, de-duplicated; out-of-range
+          or non-numeric tokens are silently ignored.
+        - Any other key: returns ``[]`` (treat as skip).
+
+        Args:
+            tasks: The extracted tasks to present.  Must be non-empty; callers
+                should skip this method when the extractor returns ``[]``.
+
+        Returns:
+            A list of :class:`~notes_os.sorter.extractor.ExtractedTask` objects
+            chosen by the user — possibly empty if the user skips or selects
+            nothing valid.
         """
         ...
 
@@ -324,3 +358,76 @@ class RichSortUI:
         except AttributeError:
             self._console.print(f"[bold]Session complete.[/bold]  {summary!s}")
         logger.debug("Summary shown: %r", summary)
+
+    def prompt_task_selection(self, tasks: Sequence[ExtractedTask]) -> list[ExtractedTask]:
+        """Present extracted tasks and let the user choose which to save.
+
+        Renders the PRD task-selection format with a numbered list of tasks
+        followed by the ``[A] Add all  [S] Select  [X] Skip`` action line.
+        Reads a single keystroke to determine the action:
+
+        - ``'a'``: returns all tasks.
+        - ``'x'``: returns ``[]`` (nothing saved).
+        - ``'s'``: reads a line of space/comma-separated 1-based numbers; returns
+          the selected tasks in input order, de-duplicated; out-of-range or
+          non-numeric tokens are silently ignored (T-05-03 defensive parse).
+        - Any other key: returns ``[]`` (treat as skip).
+
+        Args:
+            tasks: The extracted tasks to present.  Should be non-empty; callers
+                must guard against empty input before calling this method.
+
+        Returns:
+            A list of :class:`~notes_os.sorter.extractor.ExtractedTask` objects
+            chosen by the user — possibly empty.
+        """
+        self._console.print("\n[bold]Potential tasks found:[/bold]")
+        for i, task in enumerate(tasks, start=1):
+            self._console.print(f"  [bold]{i}.[/bold] {task.text}")
+        self._console.print(
+            "\n[[bold cyan]A[/bold cyan]] Add all  "
+            "[[bold cyan]S[/bold cyan]] Select  "
+            "[[bold cyan]X[/bold cyan]] Skip",
+            end="",
+        )
+
+        raw_key = self._key_reader()
+        key = raw_key.lower() if len(raw_key) == 1 else raw_key
+        self._console.print()  # newline after key
+
+        logger.debug("prompt_task_selection: key=%r", key)
+
+        if key == "a":
+            logger.debug("prompt_task_selection: add-all selected (%d tasks)", len(tasks))
+            return list(tasks)
+
+        if key == "s":
+            self._console.print("[dim]Enter numbers (space or comma separated):[/dim] ", end="")
+            raw_line = self._line_reader().strip()
+            self._console.print()
+            tokens = raw_line.replace(",", " ").split()
+            seen_indices: set[int] = set()
+            selected: list[ExtractedTask] = []
+            for token in tokens:
+                try:
+                    idx = int(token)
+                except ValueError:
+                    logger.debug("prompt_task_selection: non-numeric token %r ignored", token)
+                    continue
+                if idx < 1 or idx > len(tasks):
+                    logger.debug(
+                        "prompt_task_selection: out-of-range index %d ignored (max %d)",
+                        idx,
+                        len(tasks),
+                    )
+                    continue
+                if idx in seen_indices:
+                    continue
+                seen_indices.add(idx)
+                selected.append(tasks[idx - 1])
+            logger.debug("prompt_task_selection: select subset — %d chosen", len(selected))
+            return selected
+
+        # 'x', unknown key, or anything else → skip
+        logger.debug("prompt_task_selection: skip (key=%r)", key)
+        return []
