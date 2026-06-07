@@ -18,9 +18,20 @@ Signal families (LOCKED per PRD):
 
 from __future__ import annotations
 
+import logging
 import re
+from datetime import date
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -153,3 +164,82 @@ def extract_tasks(text: str) -> list[ExtractedTask]:
         results.append(ExtractedTask(text=fragment))
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# TaskWriter — Markdown checkbox file writer
+# ---------------------------------------------------------------------------
+
+
+class TaskWriter:
+    """Appends extracted tasks as Markdown checkboxes to a daily file.
+
+    Each call to :meth:`write` appends ``- [ ] {task.text}`` lines to
+    ``{target_dir}/YYYY-MM-DD.md``, where the date is supplied by an
+    injectable clock callable.  The target directory and its parents are
+    created if absent.  Calling :meth:`write` with an empty sequence is a
+    no-op — no file is created and nothing is written.
+
+    This class is NOT a Pydantic model.  It is a plain Python class with
+    injected dependencies so that tests can supply a deterministic clock and
+    a temporary directory without touching the real filesystem.
+
+    Args:
+        target_dir: Directory under which daily ``YYYY-MM-DD.md`` files are
+            written.  Created on first write if absent.
+        clock: Zero-argument callable that returns today's :class:`datetime.date`.
+            Defaults to :func:`datetime.date.today`.  Inject a fixed-date
+            lambda in tests to make output deterministic.
+    """
+
+    def __init__(
+        self,
+        target_dir: Path,
+        clock: Callable[[], date] | None = None,
+    ) -> None:
+        """Initialise TaskWriter with an output directory and optional clock.
+
+        Args:
+            target_dir: Directory for daily Markdown task files.
+            clock: Date provider callable (default: ``date.today``).
+        """
+        self._target_dir = target_dir
+        self._clock: Callable[[], date] = clock if clock is not None else date.today
+
+    def write(self, tasks: Sequence[ExtractedTask]) -> Path | None:
+        """Append *tasks* as Markdown checkboxes to today's daily file.
+
+        If *tasks* is empty, this method is a no-op and returns ``None`` —
+        no file is created and no filesystem access occurs.
+
+        Otherwise the method ensures ``target_dir`` exists, then opens
+        ``{target_dir}/{YYYY-MM-DD}.md`` in append mode and writes one
+        ``- [ ] {task.text}`` line per task.  If the file already exists its
+        content is preserved; new lines follow any previously written content
+        (append-if-present semantics).
+
+        Args:
+            tasks: Sequence of :class:`ExtractedTask` objects to write.
+                Empty sequence is a no-op.
+
+        Returns:
+            The :class:`~pathlib.Path` of the written file, or ``None`` if
+            *tasks* was empty.
+        """
+        if not tasks:
+            return None
+
+        self._target_dir.mkdir(parents=True, exist_ok=True)
+        filename = self._clock().isoformat() + ".md"
+        file_path = self._target_dir / filename
+
+        with file_path.open("a", encoding="utf-8") as fh:
+            for task in tasks:
+                fh.write(f"- [ ] {task.text}\n")
+
+        logger.info(
+            "Wrote %d task(s) to %s",
+            len(tasks),
+            file_path,
+        )
+        return file_path
