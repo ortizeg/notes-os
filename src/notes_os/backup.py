@@ -44,7 +44,6 @@ No Pydantic ``BaseModel`` is defined in this module (models live in
 
 from __future__ import annotations
 
-import builtins
 import logging
 import os
 import shutil
@@ -56,6 +55,8 @@ from notes_os.exceptions import BackupError
 
 
 if TYPE_CHECKING:
+    import builtins
+
     from notes_os.sorter.models import FolderPath, Note, ParaStructure
     from notes_os.sorter.notes import NotesRepositoryProtocol
 
