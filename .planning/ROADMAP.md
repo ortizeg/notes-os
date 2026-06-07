@@ -63,7 +63,7 @@ Plans:
 Plans:
 
 - [x] 02-01-PLAN.md — `models.py` + `notes.py`: `NotesRepositoryProtocol`, osascript wrapper, HTML strip, inbox read, PARA discovery (wave 1)
-- [ ] 02-02-PLAN.md — `notes.py` move/ensure-folder, `NotesError` hierarchy in exceptions.py, `MockNotesRepository` in conftest.py (wave 2, after 02-01)
+- [x] 02-02-PLAN.md — `notes.py` move/ensure-folder, `NotesError` hierarchy in exceptions.py, `MockNotesRepository` in conftest.py (wave 2, after 02-01)
 - [ ] 02-03-PLAN.md — Bridge tests: mocked unit suite (≥95% notes.py coverage) + macOS `_TestInbox` integration suite (wave 3)
 
 ---
@@ -169,7 +169,7 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 | --- | --- | --- | --- |
 | 1. Scaffold | 3/3 | Complete | 2026-06-07 |
-| 2. AppleScript Bridge | 1/3 | In Progress|  |
+| 2. AppleScript Bridge | 2/3 | In Progress|  |
 | 3. Backup | 0/2 | Not started | - |
 | 4. Sorting Core | 0/5 | Not started | - |
 | 5. Task Extraction | 0/2 | Not started | - |

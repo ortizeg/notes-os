@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: planning
 stopped_at: Completed 01-scaffold/01-02-PLAN.md — CI workflows and pre-commit config done
-last_updated: "2026-06-07T19:51:21.102Z"
+last_updated: "2026-06-07T20:08:50.065Z"
 last_activity: 2026-06-07 -- Phase 01 executed on feat/repo-scaffold; CI gates green (ruff/mypy/pytest 100% cov); gap (coverage gate) resolved
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
+  completed_plans: 5
   percent: 17
 ---
 
@@ -55,6 +55,7 @@ Progress: [██░░░░░░░░] 17% (1 of 6 phases complete)
 | Phase 01-scaffold P01 | 4min | 3 tasks | 17 files |
 | Phase 01-scaffold P02 | 1min | 2 tasks | 3 files |
 | Phase 02-applescript-bridge P01 | 6min | 3 tasks | 2 files |
+| Phase 02-applescript-bridge P02 | 5min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T19:50:48.598Z
+Last session: 2026-06-07T20:08:50.060Z
 Stopped at: Completed 01-scaffold/01-02-PLAN.md — CI workflows and pre-commit config done
 Resume file: None
