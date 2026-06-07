@@ -13,7 +13,7 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 - [x] **SCAF-02**: Stub `__init__.py` modules exist for `distiller/`, `graph/`, `suggestions/` (M2–M4) so package structure is stable
 - [ ] **SCAF-03**: CI runs three tiered jobs (lint, typecheck, test) on macOS-latest × Python 3.11 and 3.12
 - [ ] **SCAF-04**: Pre-commit hooks enforce ruff, ruff-format, mypy strict, and file hygiene on commit
-- [ ] **SCAF-05**: Repo configured with branch protection on `main`, squash-merge, CODEOWNERS, and PR/issue templates
+- [x] **SCAF-05**: Repo configured with branch protection on `main`, squash-merge, CODEOWNERS, and PR/issue templates
 
 ### AppleScript Bridge
 
@@ -112,7 +112,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | SCAF-02 | Phase 1 — Scaffold | Complete |
 | SCAF-03 | Phase 1 — Scaffold | Pending |
 | SCAF-04 | Phase 1 — Scaffold | Pending |
-| SCAF-05 | Phase 1 — Scaffold | Pending |
+| SCAF-05 | Phase 1 — Scaffold | Complete |
 | BRDG-01 | Phase 2 — AppleScript Bridge | Pending |
 | BRDG-02 | Phase 2 — AppleScript Bridge | Pending |
 | BRDG-03 | Phase 2 — AppleScript Bridge | Pending |

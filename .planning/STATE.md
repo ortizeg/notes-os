@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Roadmap created, STATE.md initialized — ready to begin Phase 1 planning
-last_updated: "2026-06-07T18:48:49.955Z"
+stopped_at: Completed 01-scaffold/01-03-PLAN.md — repo hardening done; Phase 01 scaffold complete
+last_updated: "2026-06-07T18:54:29.529Z"
 last_activity: 2026-06-07 -- Phase 01 execution started
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-07)
 ## Current Position
 
 Phase: 01 (scaffold) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-06-07 -- Phase 01 execution started
 
@@ -69,6 +69,9 @@ Recent decisions affecting current work:
 - 01-01: types-readchar not on PyPI — removed from dev deps; readchar types inline when needed
 - 01-01: Module docstring before from __future__ import annotations satisfies ruff E402 and I001
 - 01-01: Editable install requires uv pip install -e . after src/ creation when pixi ran before src existed
+- [Phase ?]: 01-03: CODEOWNERS uses @ortizeg
+- [Phase ?]: 01-03: Branch-protection script uses three-guard pattern (remote -> gh -> auth), exits 0 in all skip cases
+- [Phase ?]: 01-03: CI status check names in protection script (lint/typecheck/test) match 01-02 workflow job IDs — update if job names change
 
 ### Pending Todos
 
@@ -81,6 +84,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T18:47:11Z
-Stopped at: Completed 01-scaffold/01-01-PLAN.md — monorepo scaffold done; next: 01-02 CI workflows
+Last session: 2026-06-07T18:54:29.525Z
+Stopped at: Completed 01-scaffold/01-03-PLAN.md — repo hardening done; Phase 01 scaffold complete
 Resume file: None
