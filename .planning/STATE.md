@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 02-applescript-bridge plan 03 (test suite)
-last_updated: "2026-06-07T20:17:54.662Z"
-last_activity: 2026-06-07 -- Phase 01 executed on feat/repo-scaffold; CI gates green (ruff/mypy/pytest 100% cov); gap (coverage gate) resolved
+stopped_at: Completed 03-backup plan 02 (restore + prune + integration tests)
+last_updated: "2026-06-07T00:35:00Z"
+last_activity: 2026-06-07 -- Phase 03 fully executed on feat/backup; BackupManager.restore+prune (BKUP-04+05), backup.py 100% cov, integration test against tmp_path
 progress:
   total_phases: 6
-  completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
-  percent: 33
+  completed_phases: 3
+  total_plans: 8
+  completed_plans: 8
+  percent: 50
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-06-07)
 
 ## Current Position
 
-Phase: 02 (AppleScript Bridge) — COMPLETE ✓ (verified 5/5; notes.py 100% cov)
-Plan: 3 of 3 complete
-Status: Phase 2 done on feat/applescript-bridge (stacked on main) — ready to open PR #2 and plan Phase 3
-Last activity: 2026-06-07 -- Phase 02 executed; BaseModel standardized (pydantic.mypy plugin); ruff/mypy/pytest green; 57 unit + 4 integration tests
+Phase: 03 (Backup) — COMPLETE ✓ (verified 6/6; backup.py 100% cov; overall 99.71%)
+Plan: 2 of 2 complete
+Status: Phase 3 done on feat/backup — BackupManager full API (create/list/restore/prune), BackingUpNotesRepository decorator, integration lifecycle test
+Last activity: 2026-06-07 -- Phase 03 executed; BKUP-01 through BKUP-06 complete; ruff/mypy/pytest green; 103 unit tests (5 integration deselected in CI)
 
-Progress: [███░░░░░░░] 33% (2 of 6 phases complete)
+Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 
 ## Performance Metrics
 
@@ -57,6 +57,8 @@ Progress: [███░░░░░░░] 33% (2 of 6 phases complete)
 | Phase 02-applescript-bridge P01 | 6min | 3 tasks | 2 files |
 | Phase 02-applescript-bridge P02 | 5min | 3 tasks | 3 files |
 | Phase 02-applescript-bridge P03 | 15 minutes | 3 tasks | 2 files |
+| Phase 03-backup P01 | - | 3 tasks | 3 files |
+| Phase 03-backup P02 | 35 minutes | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -81,6 +83,10 @@ Recent decisions affecting current work:
 - 01-02: mypy pre-commit hook scoped to ^src/ — mirrors pyproject.toml scope
 - 01-02: codecov upload marked continue-on-error so missing CODECOV_TOKEN does not fail test job
 - [Phase 02-applescript-bridge]: pydantic.dataclasses used (not BaseModel) — mypy 2.1 disallow_any_explicit incompatible with BaseModel inheritance; dataclasses provide identical validation + frozen semantics
+- [Phase 03-backup]: restore() is a pure file operation; quitting/reopening Notes is user's documented responsibility — keeps restore() unit-testable without spawning any Apple process
+- [Phase 03-backup]: prune() older_than+retention combination: older_than applied first (marks backups before cutoff), then retention enforced on remainder
+- [Phase 03-backup]: prune() rmtree failure mode: best-effort (OSError logged as warning, prune continues); prune(retention<1) raises BackupError
+- [Phase 03-backup]: import builtins inside TYPE_CHECKING block to fix mypy name-collision where self.list() shadowed builtin list[] in return type annotation under strict mode
 - [Phase 02-applescript-bridge]: RS/US delimiter constants: _FIELD_SEP=chr(31)/_RECORD_SEP=chr(30) for tamper-resistant AppleScript output parsing; plan 02-03 must import from notes.py
 - [Phase ?]: 100% notes.py coverage from mocked unit suite alone; sentinel tests patch _run_osascript not subprocess.run; MockNotesRepository imported under TYPE_CHECKING
 
@@ -95,6 +101,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T20:17:54.658Z
-Stopped at: Completed 02-applescript-bridge plan 03 (test suite)
+Last session: 2026-06-07T00:35:00Z
+Stopped at: Completed 03-backup plan 02 (restore + prune + integration tests)
 Resume file: None

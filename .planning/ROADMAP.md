@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Scaffold** — Monorepo, pixi env, CI, pre-commit, branch protection, M2-M4 stubs
 - [x] **Phase 2: AppleScript Bridge** — Read inbox, discover PARA structure, move note, ensure folder, typed errors, NotesRepositoryProtocol (completed 2026-06-07)
-- [ ] **Phase 3: Backup** — Auto-backup-before-write, create/list/restore/prune, BackupError
+- [x] **Phase 3: Backup** — Auto-backup-before-write, create/list/restore/prune, BackupError (completed 2026-06-07)
 - [ ] **Phase 4: Sorting Core** — Config (Pydantic V2), PARA router state machine, terminal UI primitives, session tracking
 - [ ] **Phase 5: Task Extraction** — Heuristic action-item scanner, user selection, Markdown output, off by default
 - [ ] **Phase 6: Textual TUI Integration** — Full Textual app wired end-to-end via `notes` entry point
@@ -87,7 +87,7 @@ Plans:
 Plans:
 
 - [x] 03-01: `backup.py` — auto-backup-before-write hook, create/list, `BackupError`, 95% coverage
-- [ ] 03-02: `backup.py` — restore, prune (retention=10 default), integration + unit tests
+- [x] 03-02: `backup.py` — restore, prune (retention=10 default), integration + unit tests
 
 ---
 
@@ -170,7 +170,7 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 | --- | --- | --- | --- |
 | 1. Scaffold | 3/3 | Complete | 2026-06-07 |
 | 2. AppleScript Bridge | 3/3 | Complete   | 2026-06-07 |
-| 3. Backup | 0/2 | Not started | - |
+| 3. Backup | 2/2 | Complete | 2026-06-07 |
 | 4. Sorting Core | 0/5 | Not started | - |
 | 5. Task Extraction | 0/2 | Not started | - |
 | 6. Textual TUI Integration | 0/4 | Not started | - |
