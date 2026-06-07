@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-scaffold/01-03-PLAN.md — repo hardening done; Phase 01 scaffold complete
-last_updated: "2026-06-07T18:54:29.529Z"
-last_activity: 2026-06-07 -- Phase 01 execution started
+stopped_at: Completed 01-scaffold/01-02-PLAN.md — CI workflows and pre-commit config done
+last_updated: "2026-06-07T18:56:50Z"
+last_activity: 2026-06-07 -- Phase 01 plan 02 completed
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 3
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -53,6 +53,7 @@ Progress: [███░░░░░░░] 33%
 
 *Updated after each plan completion*
 | Phase 01-scaffold P01 | 4min | 3 tasks | 17 files |
+| Phase 01-scaffold P02 | 1min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,10 @@ Recent decisions affecting current work:
 - [Phase ?]: 01-03: CODEOWNERS uses @ortizeg
 - [Phase ?]: 01-03: Branch-protection script uses three-guard pattern (remote -> gh -> auth), exits 0 in all skip cases
 - [Phase ?]: 01-03: CI status check names in protection script (lint/typecheck/test) match 01-02 workflow job IDs — update if job names change
+- 01-02: pip-based CI setup (not pixi) — avoids pixi-on-CI overhead; plain pip install -e . per job
+- 01-02: types-readchar excluded from .pre-commit-config.yaml — package does not exist on PyPI (consistent with 01-01 decision)
+- 01-02: mypy pre-commit hook scoped to ^src/ — mirrors pyproject.toml scope
+- 01-02: codecov upload marked continue-on-error so missing CODECOV_TOKEN does not fail test job
 
 ### Pending Todos
 
@@ -84,6 +89,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T18:54:29.525Z
-Stopped at: Completed 01-scaffold/01-03-PLAN.md — repo hardening done; Phase 01 scaffold complete
+Last session: 2026-06-07T18:56:50Z
+Stopped at: Completed 01-scaffold/01-02-PLAN.md — CI workflows and pre-commit config done
 Resume file: None

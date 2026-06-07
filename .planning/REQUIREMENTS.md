@@ -11,8 +11,8 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 
 - [x] **SCAF-01**: Monorepo initialized with src layout (`src/notes_os/`), pixi environment, and pyproject.toml (Hatchling + hatch-vcs) exposing the `notes` entry point
 - [x] **SCAF-02**: Stub `__init__.py` modules exist for `distiller/`, `graph/`, `suggestions/` (M2–M4) so package structure is stable
-- [ ] **SCAF-03**: CI runs three tiered jobs (lint, typecheck, test) on macOS-latest × Python 3.11 and 3.12
-- [ ] **SCAF-04**: Pre-commit hooks enforce ruff, ruff-format, mypy strict, and file hygiene on commit
+- [x] **SCAF-03**: CI runs three tiered jobs (lint, typecheck, test) on macOS-latest × Python 3.11 and 3.12
+- [x] **SCAF-04**: Pre-commit hooks enforce ruff, ruff-format, mypy strict, and file hygiene on commit
 - [x] **SCAF-05**: Repo configured with branch protection on `main`, squash-merge, CODEOWNERS, and PR/issue templates
 
 ### AppleScript Bridge

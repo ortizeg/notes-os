@@ -40,7 +40,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 
 - [x] 01-01-PLAN.md — Monorepo init: pyproject.toml (Hatchling + hatch-vcs), pixi.toml, src layout, `notes` entry point, M2-M4 stubs
-- [ ] 01-02-PLAN.md — CI + pre-commit: three-job GitHub Actions matrix (lint/typecheck/test, macOS × 3.11/3.12), pre-commit hooks
+- [x] 01-02-PLAN.md — CI + pre-commit: three-job GitHub Actions matrix (lint/typecheck/test, macOS × 3.11/3.12), pre-commit hooks
 - [x] 01-03-PLAN.md — Repo hardening: CODEOWNERS, PR/issue templates, CLAUDE.md, conditional branch-protection script
 
 ---
@@ -168,7 +168,7 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 | --- | --- | --- | --- |
-| 1. Scaffold | 2/3 | In Progress|  |
+| 1. Scaffold | 3/3 | Complete | 2026-06-07 |
 | 2. AppleScript Bridge | 0/3 | Not started | - |
 | 3. Backup | 0/2 | Not started | - |
 | 4. Sorting Core | 0/5 | Not started | - |
