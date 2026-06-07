@@ -22,6 +22,21 @@ Design note — staging-then-rename:
     ``NoteStore_*`` prefix.  Any error during staging removes the staging dir and
     raises ``BackupError``; the destination dir is left absent.
 
+Design note — restore:
+    ``BackupManager.restore()`` is a PURE FILE OPERATION.  It copies the backup's
+    files back over ``notes_db_dir`` but does NOT quit or relaunch Apple Notes.
+    Quitting Notes before restore and reopening after is the USER'S responsibility
+    (see :meth:`~BackupManager.restore` docstring).  This design keeps restore
+    fully unit-testable against temp directories without spawning any Apple process.
+
+Design note — prune (older_than + retention):
+    ``BackupManager.prune()`` applies ``older_than`` first (marking any backup
+    whose timestamp predates the cutoff for deletion), then enforces the retention
+    count on the *remaining* (not-yet-marked-for-deletion) backups — deleting
+    anything beyond the ``keep`` newest among those.  OSError from ``shutil.rmtree``
+    is logged as a warning (best-effort delete) so a single stuck directory does
+    not abort pruning of other backups.
+
 No Pydantic ``BaseModel`` is defined in this module (models live in
 ``backup_models.py``) so this file stays under mypy's full
 ``disallow_any_explicit`` checking.
@@ -29,6 +44,7 @@ No Pydantic ``BaseModel`` is defined in this module (models live in
 
 from __future__ import annotations
 
+import builtins
 import logging
 import os
 import shutil
@@ -279,6 +295,153 @@ class BackupManager:
 
         backups.sort(key=lambda b: b.timestamp, reverse=True)
         return backups
+
+    def restore(self, timestamp: str = "latest") -> Backup:
+        """Copy a backup's files back over the live Notes database directory.
+
+        **Documented restore procedure (user responsibility):**
+            1. Quit Apple Notes completely before calling this method.
+            2. Call ``restore()`` to replace the live DB files.
+            3. Reopen Apple Notes after the method returns.
+
+        This method is a PURE FILE OPERATION — it does NOT quit or relaunch
+        Apple Notes.  Automating the quit/reopen cycle is explicitly out of
+        scope for v1 to keep this method unit-testable against temp directories
+        without spawning any Apple process.
+
+        Restore copies every file that is present in the chosen backup directory
+        back over ``config.notes_db_dir``, mirroring the sidecar-optional logic
+        used by :meth:`create`.  A backup that is missing any of the three
+        canonical filenames entirely raises :class:`BackupError` so the live
+        DB is never left in a torn state (T-03-04 mitigation).
+
+        Args:
+            timestamp: Either the string ``"latest"`` (the default) to restore
+                the most-recent backup, or a timestamp string in the format
+                ``YYYY-MM-DD_HH-MM-SS`` that identifies a specific backup.
+
+        Returns:
+            The :class:`~notes_os.backup_models.Backup` record that was restored.
+
+        Raises:
+            BackupError: If *timestamp* is ``"latest"`` and no backups exist,
+                if no backup matches the given timestamp string, if the resolved
+                backup directory is missing any of the three canonical
+                ``NOTE_STORE_FILES``, or if any file-copy or directory operation
+                raises an ``OSError``.
+        """
+        backups = self.list()
+
+        if timestamp == "latest":
+            if not backups:
+                msg = "no backups to restore"
+                raise BackupError(msg)
+            target = backups[0]
+        else:
+            match = next(
+                (b for b in backups if b.timestamp.strftime(_TS_FORMAT) == timestamp),
+                None,
+            )
+            if match is None:
+                msg = f"no backup for timestamp {timestamp}"
+                raise BackupError(msg)
+            target = match
+
+        try:
+            self._config.notes_db_dir.mkdir(parents=True, exist_ok=True)
+            for name in NOTE_STORE_FILES:
+                src = target.path / name
+                if not src.exists():
+                    msg = f"incomplete backup, missing {name}"
+                    raise BackupError(msg)
+                shutil.copy2(src, self._config.notes_db_dir / name)
+        except BackupError:
+            raise
+        except OSError as err:
+            msg = f"restore failed while copying from {target.path}: {err}"
+            raise BackupError(msg) from err
+
+        logger.info(
+            "Restored backup: %s -> %s",
+            target.path,
+            self._config.notes_db_dir,
+        )
+        return target
+
+    def prune(
+        self,
+        retention: int | None = None,
+        older_than: datetime | None = None,
+    ) -> builtins.list[Backup]:
+        """Delete old backups, keeping only the most recent ones.
+
+        Applies ``older_than`` first, then enforces the ``retention`` count on
+        the remainder.  Specifically:
+
+        1. **older_than pass** — any backup whose timestamp is strictly earlier
+           than *older_than* is marked for deletion, regardless of *retention*.
+        2. **retention pass** — from the backups NOT already marked for deletion,
+           keep only the *retention* newest; mark anything beyond that for
+           deletion too.
+
+        Each backup directory is removed with :func:`shutil.rmtree`.  An
+        ``OSError`` from ``rmtree`` is logged as a warning (best-effort delete)
+        so a single stuck directory does not abort pruning of the others.
+
+        Args:
+            retention: Number of newest backups to keep.  Defaults to
+                ``config.max_backups`` when ``None``.  Must be >= 1; values < 1
+                raise :class:`BackupError`.
+            older_than: Optional cutoff datetime.  Backups with a timestamp
+                strictly earlier than this value are deleted regardless of the
+                retention count (applied before the retention pass).  ``None``
+                disables the cutoff.
+
+        Returns:
+            A list of :class:`~notes_os.backup_models.Backup` records that were
+            deleted (successfully or with a best-effort warning on ``OSError``).
+
+        Raises:
+            BackupError: If *retention* is less than 1.
+        """
+        keep = retention if retention is not None else self._config.max_backups
+        if keep < 1:
+            msg = f"retention must be >= 1; got {keep}"
+            raise BackupError(msg)
+
+        backups = self.list()  # newest-first
+
+        to_delete: list[Backup] = []
+        remaining: list[Backup] = []
+
+        # Pass 1: older_than filter.
+        if older_than is not None:
+            for b in backups:
+                if b.timestamp < older_than:
+                    to_delete.append(b)
+                else:
+                    remaining.append(b)
+        else:
+            remaining = list(backups)
+
+        # Pass 2: retention on what is left (already newest-first).
+        if len(remaining) > keep:
+            to_delete.extend(remaining[keep:])
+
+        deleted: list[Backup] = []
+        for b in to_delete:
+            try:
+                shutil.rmtree(b.path)
+                deleted.append(b)
+            except OSError:
+                logger.warning(
+                    "prune: failed to remove backup dir %s (best-effort, continuing)",
+                    b.path,
+                )
+                deleted.append(b)  # still tracked as "intended for deletion"
+
+        logger.info("Pruned %d backup(s)", len(deleted))
+        return deleted
 
 
 # ---------------------------------------------------------------------------
