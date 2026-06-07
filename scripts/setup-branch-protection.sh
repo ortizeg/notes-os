@@ -19,11 +19,14 @@
 #   3. `gh auth login` must have been run at least once.
 #
 # CI STATUS CHECK NAMES:
-#   The required status checks reference the job names from .github/workflows/:
-#     lint       (ruff check + format)
-#     typecheck  (mypy strict)
-#     test       (pytest)
-#   Update these names if the workflow job IDs change.
+#   GitHub names each check run "<job name> (<matrix value>)". Our workflows set
+#   custom job names AND a python-version matrix (3.11, 3.12), so the actual
+#   check-run contexts are the six names below — NOT bare "lint"/"typecheck"/"test".
+#   Requiring names that never report would permanently block every PR, so these
+#   MUST stay in sync with the `name:` fields and matrix in .github/workflows/:
+#     lint.yml  job "Lint (ruff)"             -> "Lint (ruff) (3.11)",  "Lint (ruff) (3.12)"
+#     lint.yml  job "Typecheck (mypy strict)" -> "Typecheck (mypy strict) (3.11)", "... (3.12)"
+#     test.yml  job "Test (pytest)"           -> "Test (pytest) (3.11)", "Test (pytest) (3.12)"
 # =============================================================================
 
 set -euo pipefail
@@ -92,7 +95,14 @@ gh api \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["lint", "typecheck", "test"]
+    "contexts": [
+      "Lint (ruff) (3.11)",
+      "Lint (ruff) (3.12)",
+      "Typecheck (mypy strict) (3.11)",
+      "Typecheck (mypy strict) (3.12)",
+      "Test (pytest) (3.11)",
+      "Test (pytest) (3.12)"
+    ]
   },
   "enforce_admins": false,
   "required_pull_request_reviews": {
@@ -117,6 +127,6 @@ echo ""
 echo "Branch protection applied to ${REPO_WITH_OWNER}:"
 echo "  ✓ Squash-merge only (no merge commits, no rebase)"
 echo "  ✓ Delete branch on merge"
-echo "  ✓ Required status checks (strict): lint, typecheck, test"
+echo "  ✓ Required status checks (strict): Lint/Typecheck/Test × Python 3.11 & 3.12"
 echo "  ✓ Required PR review with CODEOWNERS enforcement"
 echo "  ✓ Force-pushes and deletions to main are blocked"
