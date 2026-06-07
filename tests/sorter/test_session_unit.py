@@ -119,7 +119,7 @@ class TestSessionSummary:
         assert s.total == s.moved + s.skipped + s.errors
 
     def test_summary_empty_session(self) -> None:
-        from notes_os.sorter.session import SortSession, SessionSummary
+        from notes_os.sorter.session import SessionSummary, SortSession
 
         session = SortSession()
         s = session.summary()

@@ -70,7 +70,7 @@ show_column_numbers = true
 # ONLY the modules that DEFINE Pydantic models. All non-model code keeps full
 # explicit-Any checking. Add a model module here when a new phase introduces one.
 [[tool.mypy.overrides]]
-module = ["notes_os.sorter.models", "notes_os.backup_models", "notes_os.config", "notes_os.sorter.router", "notes_os.sorter.ui"]
+module = ["notes_os.sorter.models", "notes_os.backup_models", "notes_os.config", "notes_os.sorter.router", "notes_os.sorter.ui", "notes_os.sorter.session"]
 disallow_any_explicit = false
 
 [tool.pytest.ini_options]
