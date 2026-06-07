@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 01-scaffold/01-02-PLAN.md — CI workflows and pre-commit config done
-last_updated: "2026-06-07T20:08:50.065Z"
+stopped_at: Completed 02-applescript-bridge plan 03 (test suite)
+last_updated: "2026-06-07T20:17:54.662Z"
 last_activity: 2026-06-07 -- Phase 01 executed on feat/repo-scaffold; CI gates green (ruff/mypy/pytest 100% cov); gap (coverage gate) resolved
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 5
-  percent: 17
+  completed_plans: 6
+  percent: 33
 ---
 
 # Project State
@@ -56,6 +56,7 @@ Progress: [██░░░░░░░░] 17% (1 of 6 phases complete)
 | Phase 01-scaffold P02 | 1min | 2 tasks | 3 files |
 | Phase 02-applescript-bridge P01 | 6min | 3 tasks | 2 files |
 | Phase 02-applescript-bridge P02 | 5min | 3 tasks | 3 files |
+| Phase 02-applescript-bridge P03 | 15 minutes | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,7 @@ Recent decisions affecting current work:
 - 01-02: codecov upload marked continue-on-error so missing CODECOV_TOKEN does not fail test job
 - [Phase 02-applescript-bridge]: pydantic.dataclasses used (not BaseModel) — mypy 2.1 disallow_any_explicit incompatible with BaseModel inheritance; dataclasses provide identical validation + frozen semantics
 - [Phase 02-applescript-bridge]: RS/US delimiter constants: _FIELD_SEP=chr(31)/_RECORD_SEP=chr(30) for tamper-resistant AppleScript output parsing; plan 02-03 must import from notes.py
+- [Phase ?]: 100% notes.py coverage from mocked unit suite alone; sentinel tests patch _run_osascript not subprocess.run; MockNotesRepository imported under TYPE_CHECKING
 
 ### Pending Todos
 
@@ -93,6 +95,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T20:08:50.060Z
-Stopped at: Completed 01-scaffold/01-02-PLAN.md — CI workflows and pre-commit config done
+Last session: 2026-06-07T20:17:54.658Z
+Stopped at: Completed 02-applescript-bridge plan 03 (test suite)
 Resume file: None

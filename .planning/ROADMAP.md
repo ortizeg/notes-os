@@ -14,7 +14,7 @@ Milestone 1 delivers a keyboard-driven, non-destructive PARA inbox triage tool f
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Scaffold** — Monorepo, pixi env, CI, pre-commit, branch protection, M2-M4 stubs
-- [ ] **Phase 2: AppleScript Bridge** — Read inbox, discover PARA structure, move note, ensure folder, typed errors, NotesRepositoryProtocol
+- [x] **Phase 2: AppleScript Bridge** — Read inbox, discover PARA structure, move note, ensure folder, typed errors, NotesRepositoryProtocol (completed 2026-06-07)
 - [ ] **Phase 3: Backup** — Auto-backup-before-write, create/list/restore/prune, BackupError
 - [ ] **Phase 4: Sorting Core** — Config (Pydantic V2), PARA router state machine, terminal UI primitives, session tracking
 - [ ] **Phase 5: Task Extraction** — Heuristic action-item scanner, user selection, Markdown output, off by default
@@ -64,7 +64,7 @@ Plans:
 
 - [x] 02-01-PLAN.md — `models.py` + `notes.py`: `NotesRepositoryProtocol`, osascript wrapper, HTML strip, inbox read, PARA discovery (wave 1)
 - [x] 02-02-PLAN.md — `notes.py` move/ensure-folder, `NotesError` hierarchy in exceptions.py, `MockNotesRepository` in conftest.py (wave 2, after 02-01)
-- [ ] 02-03-PLAN.md — Bridge tests: mocked unit suite (≥95% notes.py coverage) + macOS `_TestInbox` integration suite (wave 3)
+- [x] 02-03-PLAN.md — Bridge tests: mocked unit suite (≥95% notes.py coverage) + macOS `_TestInbox` integration suite (wave 3)
 
 ---
 
@@ -169,7 +169,7 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 | --- | --- | --- | --- |
 | 1. Scaffold | 3/3 | Complete | 2026-06-07 |
-| 2. AppleScript Bridge | 2/3 | In Progress|  |
+| 2. AppleScript Bridge | 3/3 | Complete   | 2026-06-07 |
 | 3. Backup | 0/2 | Not started | - |
 | 4. Sorting Core | 0/5 | Not started | - |
 | 5. Task Extraction | 0/2 | Not started | - |
