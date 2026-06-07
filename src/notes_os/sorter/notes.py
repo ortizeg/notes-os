@@ -32,7 +32,7 @@ import subprocess
 from html.parser import HTMLParser
 from typing import Protocol, runtime_checkable
 
-from notes_os.exceptions import NotesOSError
+from notes_os.exceptions import NotesError
 from notes_os.sorter.models import BridgeConfig, FolderPath, Note, ParaStructure
 
 
@@ -86,7 +86,7 @@ class NotesRepositoryProtocol(Protocol):
             empty or the AppleScript returns no output.
 
         Raises:
-            NotesOSError: If the osascript subprocess exits with a non-zero
+            NotesError: If the osascript subprocess exits with a non-zero
                 return code.
         """
         ...
@@ -100,7 +100,7 @@ class NotesRepositoryProtocol(Protocol):
             with no immediate children map to an empty tuple.
 
         Raises:
-            NotesOSError: If the osascript subprocess exits with a non-zero
+            NotesError: If the osascript subprocess exits with a non-zero
                 return code.
         """
         ...
@@ -114,8 +114,10 @@ class NotesRepositoryProtocol(Protocol):
                 destination (e.g. ``("Projects", "NotesOS")``).
 
         Raises:
-            NotesOSError: If the osascript subprocess exits with a non-zero
+            NotesError: If the osascript subprocess exits with a non-zero
                 return code.
+            FolderNotFoundError: If the destination folder path does not exist.
+            NotesMoveError: If the note id cannot be found.
         """
         ...
 
@@ -127,7 +129,7 @@ class NotesRepositoryProtocol(Protocol):
                 (e.g. ``("Archive", "2026")``).
 
         Raises:
-            NotesOSError: If the osascript subprocess exits with a non-zero
+            NotesError: If the osascript subprocess exits with a non-zero
                 return code.
         """
         ...
@@ -256,10 +258,9 @@ class AppleScriptNotesRepository:
             The captured stdout of the subprocess on success (may be empty).
 
         Raises:
-            NotesOSError: If the subprocess exits with a non-zero return code.
-                A ``# 02-02: narrow to NotesError`` comment marks the raise site
-                for plan 02-02, which introduces the typed ``NotesError`` hierarchy
-                and replaces this ``NotesOSError`` with the more specific subclass.
+            NotesError: If the subprocess exits with a non-zero return code.
+                The error message contains the stderr output from osascript, or
+                ``"osascript failed"`` when stderr is empty.
         """
         result = subprocess.run(  # noqa: S603  # fixed trusted macOS binary, list args, no shell=True
             ["osascript", "-e", script],  # noqa: S607  # osascript is a fixed macOS system binary at /usr/bin/osascript
@@ -273,8 +274,7 @@ class AppleScriptNotesRepository:
                 result.returncode,
                 result.stderr.strip(),
             )
-            # 02-02: narrow to NotesError (AppleScriptError subclass)
-            raise NotesOSError(result.stderr.strip() or "osascript failed")
+            raise NotesError(result.stderr.strip() or "osascript failed")
         return result.stdout
 
     # ------------------------------------------------------------------
@@ -298,8 +298,7 @@ class AppleScriptNotesRepository:
             an empty list when the inbox is empty or osascript output is blank.
 
         Raises:
-            NotesOSError: On non-zero osascript exit code.
-                (02-02: narrow to NotesError)
+            NotesError: On non-zero osascript exit code.
         """
         inbox = self._config.inbox_folder.replace('"', '""')  # AppleScript-escape double-quotes
         script = f"""\
@@ -366,8 +365,7 @@ end tell"""
             configured roots present; roots with no children map to ``()``.
 
         Raises:
-            NotesOSError: On non-zero osascript exit code.
-                (02-02: narrow to NotesError)
+            NotesError: On non-zero osascript exit code.
         """
         # Build AppleScript root-list literal from config (names are AppleScript-escaped).
         roots_literal = ", ".join(
