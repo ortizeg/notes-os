@@ -37,11 +37,19 @@ Threat mitigations:
   RouteResult for unknown keys / out-of-range indices; screen re-renders only.
 - T-06-07 (blocking event loop): SortController.run() is never called here;
   Router transitions are discrete async event handlers.
+- T-06-08 (extraction running when disabled): ``_after_move`` first line
+  returns ``False`` immediately when ``task_extraction`` is ``False``; the
+  disabled path never imports TaskExtractScreen or TaskWriter.
+- T-06-10 (blocking event loop on extraction): ``push_screen`` with a
+  dismiss callback is non-blocking; ``_advance`` fires via the callback after
+  TaskExtractScreen is dismissed.
 
-The ``_after_move`` seam (06-03 hook):
-  Called immediately after ``_session.record_move(...)`` in :meth:`_handle_move`.
-  In this plan it is a no-op.  Phase 06-03 fills it in with the task-extraction
-  flow gated on ``config.features.task_extraction``.
+The ``_after_move`` seam (06-03):
+  Called from :meth:`_handle_move` after ``_session.record_move``.  Returns
+  ``True`` if it took ownership of the advance flow (modal pushed — advance
+  will fire via :meth:`_on_tasks_resolved` callback on dismiss).  Returns
+  ``False`` for the disabled path or when no tasks are found — caller
+  (:meth:`_handle_move`) calls ``_advance()`` immediately in that case.
 """
 
 from __future__ import annotations
@@ -54,6 +62,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
 from notes_os.exceptions import NotesOSError
+from notes_os.sorter.extractor import extract_tasks
 from notes_os.sorter.router import RouteAction, Router, RouteResult, RouterState
 from notes_os.sorter.session import SortSession
 
@@ -65,6 +74,7 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
 
     from notes_os.app import NotesOSApp
+    from notes_os.sorter.extractor import ExtractedTask
     from notes_os.sorter.models import Note
 
 
@@ -343,39 +353,109 @@ class SortScreen(Screen[None]):
         self.notify(_HELP_TEXT, title="Sort Help", timeout=8.0)
 
     def _handle_move(self, note: Note, result: RouteResult) -> None:
-        """Record a successful move and advance to the next note.
+        """Record a successful move, then advance (or defer advance to modal).
 
         Wraps the move in ``try/except NotesOSError`` so one failure does NOT
         abort the session (T-06-05 mitigation, mirrors T-04-10 in controller).
-        After recording, calls :meth:`_after_move` (the 06-03 extraction seam)
-        then advances to the next note.
+
+        After recording, calls :meth:`_after_move` which returns ``True`` when
+        it pushed the ``TaskExtractScreen`` modal and will call ``_advance``
+        via the dismiss callback.  On ``False`` (disabled path or no tasks),
+        ``_advance`` is called immediately here.
+
+        When an error occurs, advance is always immediate (no modal on error).
 
         Args:
             note: The note that was just moved.
             result: The ``RouteResult`` with ``action==MOVE`` and
                 ``folder_path`` populated.
         """
+        extraction_deferred = False
         try:
             if result.folder_path is not None:
                 self._session.record_move(note.id, result.folder_path)
                 logger.debug("Note %r moved to %s", note.id, result.display_path)
-                self._after_move(note)
+                extraction_deferred = self._after_move(note)
         except NotesOSError as exc:
             self._session.record_error(note.id, str(exc))
             logger.warning("SortScreen: error moving note %r: %s", note.id, exc)
-        self._advance()
+        if not extraction_deferred:
+            self._advance()
 
-    def _after_move(self, note: Note) -> None:
-        """Hook called after a successful move — no-op in this plan.
+    def _after_move(self, note: Note) -> bool:
+        """Post-move hook: optionally show TaskExtractScreen, gated on config.
 
-        Phase 06-03 fills this in with the task-extraction flow gated on
-        ``self.app.app_config.features.task_extraction``.  The seam exists
-        here so 06-03 has a single, clearly-named entry point.
+        SC1 / T-06-08 gate — FIRST LINE must be this check.  When
+        ``task_extraction`` is ``False`` (M1 default) the method returns
+        ``False`` immediately with zero side effects — no extractor, no writer,
+        no screen access.  This keeps the disabled path byte-identical to 06-02.
+
+        On the enabled path:
+        1. Runs ``extract_tasks(note.preview)`` — pure, fast, non-blocking.
+        2. If no tasks found, returns ``False`` (advance happens immediately).
+        3. If tasks found, pushes ``TaskExtractScreen`` as a modal with a
+           dismiss callback (:meth:`_on_tasks_resolved`).  Returns ``True`` so
+           :meth:`_handle_move` does NOT call ``_advance`` immediately — the
+           callback will call it after the user resolves the modal.
 
         Args:
             note: The note that was just moved.
+
+        Returns:
+            ``True`` when TaskExtractScreen was pushed (advance deferred to
+            :meth:`_on_tasks_resolved`); ``False`` when advance should happen
+            immediately (disabled, no tasks, or no preview).
         """
-        logger.debug("_after_move seam called for note %r (no-op in 06-02)", note.id)
+        # SC1 gate — must be first (T-06-08 mitigation)
+        app: NotesOSApp = self.app  # type: ignore[assignment]
+        if not app.app_config.features.task_extraction:
+            return False
+
+        tasks: list[ExtractedTask] = extract_tasks(note.preview or "")
+        if not tasks:
+            logger.debug("_after_move: no tasks found in note %r", note.id)
+            return False
+
+        # Lazy import — avoids cost on the disabled path
+        from notes_os.sorter.extractor import TaskWriter
+
+        writer = TaskWriter(app.app_config.features.extracted_tasks_dir)
+        from notes_os.screens.task_extract import TaskExtractScreen
+
+        logger.debug(
+            "_after_move: pushing TaskExtractScreen with %d task(s) for note %r",
+            len(tasks),
+            note.id,
+        )
+        # Use app.call_after_refresh (NOT self.call_after_refresh) to defer the
+        # push_screen call until AFTER the current key event has finished bubbling.
+        # If push_screen() is called inline during on_key(), the routing keystroke
+        # (e.g. 'x' for Archive) propagates to the newly mounted TaskExtractScreen
+        # and triggers action_skip immediately.  Scheduling on the App's message
+        # pump avoids this key-event collision: SortScreen's ScreenSuspend does not
+        # prevent the App-level InvokeLater from firing.
+        modal = TaskExtractScreen(tasks, writer)
+        self.app.call_after_refresh(self.app.push_screen, modal, self._on_tasks_resolved)
+        return True
+
+    def _on_tasks_resolved(self, selected: list[ExtractedTask] | None) -> None:
+        """Callback fired when TaskExtractScreen is dismissed.
+
+        Called by Textual after the modal is dismissed with its result (the
+        list of tasks the user chose to write — empty on Skip, ``None`` if the
+        screen was dismissed without a result).  Advances the sort flow to the
+        next note so the session continues.
+
+        Args:
+            selected: Tasks written by TaskExtractScreen (or empty/None on Skip).
+                Used only for logging here; write already happened inside the screen.
+        """
+        count = len(selected) if selected else 0
+        logger.debug(
+            "_on_tasks_resolved: %d task(s) selected; advancing sort flow",
+            count,
+        )
+        self._advance()
 
     def _advance(self) -> None:
         """Increment the note pointer and render the next note or finish.

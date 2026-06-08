@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from textual.binding import Binding, BindingType
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, SelectionList, Static
+from textual.widgets import SelectionList, Static
 from textual.widgets.selection_list import Selection
 
 
@@ -118,13 +118,13 @@ class TaskExtractScreen(ModalScreen[list["ExtractedTask"]]):
     def compose(self) -> ComposeResult:
         """Lay out the task-extract modal widgets.
 
-        Yields a Header, header Static, a SelectionList of tasks, a footer
-        legend Static, and a Footer.
+        Yields a header Static, a SelectionList of tasks, and a footer legend
+        Static.  Modal screens do not include Header/Footer widgets — those are
+        reserved for full-screen layouts.
 
         Yields:
-            Header, Static label, SelectionList, Static legend, Footer.
+            Static label, SelectionList, Static legend.
         """
-        yield Header(show_clock=False)
         yield Static(
             f"Potential tasks found: ({len(self._tasks)})\n"
             "Press [A] to add all, [S] to select, [X] or Esc to skip.",
@@ -136,7 +136,6 @@ class TaskExtractScreen(ModalScreen[list["ExtractedTask"]]):
         ]
         yield SelectionList[int](*selections, id="task-list")
         yield Static(_FOOTER_LEGEND, id="task-legend")
-        yield Footer()
 
     def on_mount(self) -> None:
         """Focus the task list on mount so keyboard navigation works immediately."""

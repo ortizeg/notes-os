@@ -39,6 +39,7 @@ from textual.binding import Binding, BindingType
 
 from notes_os.screens.home import HomeScreen
 from notes_os.screens.sort import SortScreen
+from notes_os.screens.task_extract import TaskExtractScreen
 
 
 if TYPE_CHECKING:
@@ -101,6 +102,7 @@ class NotesOSApp(App[None]):
     SCREENS: ClassVar[dict[str, type]] = {  # type: ignore[assignment]
         "home": HomeScreen,
         "sort": SortScreen,
+        "task_extract": TaskExtractScreen,
     }
 
     BINDINGS: ClassVar[list[BindingType]] = [
