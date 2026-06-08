@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 05-task-extraction 05-01-PLAN.md
-last_updated: "2026-06-07T23:00:48.750Z"
+stopped_at: Completed 06-tui-integration-01-PLAN.md
+last_updated: "2026-06-08T03:34:23.631Z"
 last_activity: 2026-06-07 -- Phase 05 plan 01 executed; TASK-01 extractor.py pure heuristic scanner; ExtractedTask frozen Pydantic V2 model; 25 tests 100% coverage; 274 total tests 95.08% overall coverage
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 15
-  completed_plans: 15
+  total_plans: 19
+  completed_plans: 16
   percent: 83
 ---
 
@@ -66,6 +66,7 @@ Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 | Phase 04-sorting-core P05 | 371 | 2 tasks | 3 files |
 | Phase 05-task-extraction P01 | 135 | 3 tasks | 3 files |
 | Phase 05-task-extraction P02 | 7m | 3 tasks | 7 files |
+| Phase 06-tui-integration P01 | 10min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,9 @@ Recent decisions affecting current work:
 - [Phase 05-task-extraction]: ExtractedTask has single text: str field — minimal model; downstream UI/writer adds metadata in 05-02 if needed (YAGNI)
 - [Phase 05-task-extraction]: extract_tasks returns [] on empty/whitespace input — no exception raised; extractor has no failure modes in plan 01
 - [Phase 05-task-extraction]: notes_os.sorter.extractor appended to mypy disallow_any_explicit=false override (7th entry); ExtractedTask(BaseModel) inherits Pydantic Any API
+- [Phase ?]: self.app_config names SorterConfig to avoid Textual App.config collision
+- [Phase ?]: Deferred imports in NotesOSApp.__init__ mirror build_default_controller() — no AppleScript at module load
+- [Phase ?]: Pilot tests use app.screen.query_one() not app.query_one() — HomeScreen sits atop default base Screen in stack
 
 ### Pending Todos
 
@@ -126,6 +130,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T23:00:48.746Z
-Stopped at: Completed 05-task-extraction 05-01-PLAN.md
+Last session: 2026-06-08T03:34:23.627Z
+Stopped at: Completed 06-tui-integration-01-PLAN.md
 Resume file: None

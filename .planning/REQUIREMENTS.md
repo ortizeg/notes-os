@@ -72,11 +72,11 @@ Requirements for Milestone 1. Each maps to exactly one roadmap phase.
 
 ### Textual TUI Application
 
-- [ ] **TUI-01**: The `notes` command launches the full Textual TUI application (no subcommands)
-- [ ] **TUI-02**: HomeScreen shows the splash + main menu with live status indicators (inbox count, active backend, last backup)
+- [x] **TUI-01**: The `notes` command launches the full Textual TUI application (no subcommands)
+- [x] **TUI-02**: HomeScreen shows the splash + main menu with live status indicators (inbox count, active backend, last backup)
 - [ ] **TUI-03**: SortScreen runs the inbox triage flow end-to-end
 - [ ] **TUI-04**: TaskExtractScreen reviews extracted tasks after each note when extraction is enabled
-- [ ] **TUI-05**: Navigation conventions are consistent across screens (`↑↓` move, `Enter` select, `Esc`/`B` back, `Q` quit, `?` help)
+- [x] **TUI-05**: Navigation conventions are consistent across screens (`↑↓` move, `Enter` select, `Esc`/`B` back, `Q` quit, `?` help)
 
 ## v2 Requirements
 
@@ -147,11 +147,11 @@ Which phases cover which requirements. Populated during roadmap creation.
 | TASK-02 | Phase 5 — Task Extraction | Complete |
 | TASK-03 | Phase 5 — Task Extraction | Complete |
 | TASK-04 | Phase 5 — Task Extraction | Complete |
-| TUI-01 | Phase 6 — Textual TUI Integration | Pending |
-| TUI-02 | Phase 6 — Textual TUI Integration | Pending |
+| TUI-01 | Phase 6 — Textual TUI Integration | Complete |
+| TUI-02 | Phase 6 — Textual TUI Integration | Complete |
 | TUI-03 | Phase 6 — Textual TUI Integration | Pending |
 | TUI-04 | Phase 6 — Textual TUI Integration | Pending |
-| TUI-05 | Phase 6 — Textual TUI Integration | Pending |
+| TUI-05 | Phase 6 — Textual TUI Integration | Complete |
 
 **Coverage:**
 
