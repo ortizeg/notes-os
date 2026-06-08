@@ -11,7 +11,8 @@ coverage floor**.
 **Key changes:**
 - `backup.py` `BackingUpNotesRepository`: per-session "already backed up" latch; first-write
   backup failure still aborts that write (BKUP-06 preserved).
-- `config`: `backup_cadence: "session" | "write"` (default `"session"`).
+- Remove the before-every-write path entirely — per-session is the sole cadence (no
+  `backup_cadence` config hatch; decided 2026-06-08).
 - Threat-model notes (T-04-09 / T-06-04) updated in `backup.py` and CLAUDE.md.
 
 **Success criteria:** see `.planning/milestones/v3.0-speed-triage-ux-ROADMAP.md` › Phase 12.

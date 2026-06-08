@@ -147,8 +147,9 @@ a session." ~100× less churn; removes most of the move freeze even before Phase
   Keep `auto_backup_on_write` as the master switch.
 - Update threat-model notes (T-04-09 / T-06-04): mitigation becomes "a restore point is
   captured before the first write of each session," documented in `backup.py` + CLAUDE.md.
-- `config`: optional `backup_cadence: "session" | "write"` (default `"session"`) so the
-  old behavior is recoverable.
+- Remove the before-every-write path entirely — per-session is the sole cadence (no
+  `backup_cadence` config). Simpler surface area; the BKUP-06 abort-on-failed-backup
+  invariant is preserved for the session's first write.
 
 **Success criteria** — exactly one backup dir per session regardless of move count; a
 fresh session creates a new one. No write proceeds if that first backup fails (BKUP-06
@@ -247,11 +248,14 @@ even while previews stream.
 - **All AppleScript mocked** in unit tests; integration tests `@pytest.mark.integration`,
   macOS-only, `_TestInbox`.
 
-## 6. Open questions
-1. Page size (200) and threshold (250) — confirm against a real large inbox before locking.
-2. Undo stack depth — last-action only, or full-session? (Spec assumes full-session.)
-3. Resume prompt — auto-resume silently vs always ask? (Spec assumes ask.)
-4. Keep `backup_cadence: "write"` escape hatch, or drop it and commit to per-session?
+## 6. Resolved decisions (2026-06-08)
+1. **Paging:** threshold **250**, page size **200**, first page first. Re-confirm timings
+   against a real large inbox during Phase 10 planning; 250/200 is the locked default.
+2. **Undo:** **repeatable single-step** — `U` undoes the most recent action, and can be
+   pressed repeatedly to walk back, unbounded within the session (LIFO stack to session start).
+3. **Resume:** **always ask** "Resume at N / Start over" on relaunch with saved progress.
+4. **Backup cadence:** **drop** the `"write"` escape hatch — per-session is the *only*
+   cadence. The before-every-write code path is removed (not just defaulted off).
 
 ## 7. Suggested merge order
 `Phase 1 → Phase 2 → Phase 7` (read/UX track) and `Phase 3 → Phase 4` (write track) can

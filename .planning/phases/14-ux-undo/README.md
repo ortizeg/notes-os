@@ -12,8 +12,9 @@ fly through the inbox.
 - `sorter/notes.py`: capture the source `FolderPath` at move time so a move-back targets the
   true origin (note may have come from a subfolder of inbox).
 - `screens/sort.py`: bind `U`; move-back reuses Phase 13's off-thread write plumbing; step
-  `_index` back; correct counts. Edge cases: empty stack (no-op + hint), undo of a skip
-  (no write), undo after finish.
+  `_index` back; correct counts. `U` is **repeatable** — each press pops one more action,
+  unbounded within the session (LIFO to session start). Edge cases: empty stack (no-op +
+  hint), undo of a skip (no write), undo after finish.
 
 **Success criteria:** see `.planning/milestones/v3.0-speed-triage-ux-ROADMAP.md` › Phase 14.
 **Design:** `.planning/SPEC-speed-and-triage-ux.md` › Phase 5.
