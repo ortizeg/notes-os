@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 06-tui-integration/06-02-PLAN.md
-last_updated: "2026-06-08T04:01:19.962Z"
-last_activity: 2026-06-07 -- Phase 05 plan 01 executed; TASK-01 extractor.py pure heuristic scanner; ExtractedTask frozen Pydantic V2 model; 25 tests 100% coverage; 274 total tests 95.08% overall coverage
+stopped_at: Completed 06-tui-integration/06-04-PLAN.md (Milestone 1 complete)
+last_updated: "2026-06-08T01:00:00.000Z"
+last_activity: 2026-06-08 -- Phase 06 plan 04 executed; ConfirmQuitModal + sort_in_progress guard; SC4 nav Pilot suite (10 tests); E2E Home→Sort→TaskExtract→finish walk; integration smoke; 329 tests 92% coverage
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 19
-  completed_plans: 18
-  percent: 83
+  completed_plans: 19
+  percent: 100
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-06-07)
 
 ## Current Position
 
-Phase: 05 (Task Extraction) — In Progress (1/2 plans complete)
-Plan: 2 of 2 complete
-Status: Phase 5 plan 01 done — pure heuristic extract_tasks + frozen ExtractedTask; 3-family LOCKED regexes; 100% extractor coverage; 274 tests overall 95.08%; 1 plan remaining (05-02 extraction UI)
-Last activity: 2026-06-07 -- Phase 05 plan 01 executed; TASK-01 extractor.py pure heuristic scanner; ExtractedTask frozen Pydantic V2 model; 25 tests 100% coverage; 274 total tests 95.08% overall coverage
+Phase: 06 (Textual TUI Integration) — COMPLETE (4/4 plans complete)
+Plan: 4 of 4 complete — Milestone 1 DONE
+Status: Phase 06 plan 04 done — ConfirmQuitModal quit-confirm guard; sort_in_progress flag on NotesOSApp; SC4 navigation Pilot suite (10 tests); E2E Home→Sort→TaskExtract→finish walk proving SC1+SC2+SC3; integration smoke test (deselected in CI); 329 tests 92% coverage
+Last activity: 2026-06-08 -- Phase 06 plan 04 executed; ConfirmQuitModal + sort_in_progress guard; SC4 nav Pilot suite (10 tests); E2E Home→Sort→TaskExtract→finish walk; integration smoke; 329 tests 92% coverage
 
-Progress: [████░░░░░░] 50% (3 of 6 phases complete)
+Progress: [██████████] 100% (6 of 6 phases complete) — Milestone 1 COMPLETE
 
 ## Performance Metrics
 
@@ -69,6 +69,7 @@ Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 | Phase 06-tui-integration P01 | 10min | 3 tasks | 11 files |
 | Phase 06-tui-integration P02 | 530 | 2 tasks | 5 files |
 | Phase 06-tui-integration P03 | 10min | 2 tasks | 5 files |
+| Phase 06-tui-integration P04 | 45min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -123,6 +124,10 @@ Recent decisions affecting current work:
 - [Phase ?]: SortScreen drives Router directly via discrete Textual key events — no blocking SortController.run()
 - [Phase ?]: Spy BackupManager in SC2 tests: macOS rename fails on same-second timestamp collision; spy proves create() called while keeping BackingUpNotesRepository real
 - [Phase ?]: _after_move(note) no-op seam in SortScreen immediately after record_move() — 06-03 fills with task extraction
+- [Phase 06-04]: ConfirmQuitModal has no Header/Footer — macOS Textual: Header._on_mount raises NoMatches in modal context (06-03 discovery enforced)
+- [Phase 06-04]: async action_quit override required — parent App.action_quit is async def; sync override fails mypy strict override check
+- [Phase 06-04]: sort_in_progress: bool on NotesOSApp (not SortScreen) — action_quit reads app-level flag without needing a screen cast
+- [Phase 06-04]: Spy BackupManager mandatory for multi-move Pilot tests — real BackupManager raises BackupError on same-second atomic rename collision (macOS constraint)
 
 ### Pending Todos
 
@@ -135,6 +140,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-08T04:01:19.958Z
-Stopped at: Completed 06-tui-integration/06-02-PLAN.md
+Last session: 2026-06-08T01:00:00.000Z
+Stopped at: Completed 06-tui-integration/06-04-PLAN.md (Milestone 1 complete)
 Resume file: None
