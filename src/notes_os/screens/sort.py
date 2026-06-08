@@ -201,10 +201,14 @@ class SortScreen(Screen[None]):
             Header, four Static content panels, Footer.
         """
         yield Header(show_clock=False)
-        yield Static("", id="note-title")
-        yield Static("", id="note-preview")
-        yield Static("", id="prompt")
-        yield Static("", id="progress")
+        # markup=False: these Statics render literal text — the category prompt's
+        # "[P]rojects [A]reas …" shortcuts and arbitrary note title/preview content
+        # (which may contain "[" brackets). Textual console markup would otherwise
+        # parse "[P]" etc. as tags and strip them, eating the first letter.
+        yield Static("", id="note-title", markup=False)
+        yield Static("", id="note-preview", markup=False)
+        yield Static("", id="prompt", markup=False)
+        yield Static("", id="progress", markup=False)
         yield Footer()
 
     def on_mount(self) -> None:

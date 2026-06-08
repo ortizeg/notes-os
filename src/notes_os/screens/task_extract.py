@@ -125,17 +125,20 @@ class TaskExtractScreen(ModalScreen[list["ExtractedTask"]]):
         Yields:
             Static label, SelectionList, Static legend.
         """
+        # markup=False: the "[A]/[S]/[X]" shortcuts are literal text — Textual
+        # console markup would otherwise strip "[A]" etc. as tags.
         yield Static(
             f"Potential tasks found: ({len(self._tasks)})\n"
             "Press [A] to add all, [S] to select, [X] or Esc to skip.",
             id="task-header",
+            markup=False,
         )
         selections = [
             Selection(f"{i + 1}. {task.text}", i, initial_state=False)
             for i, task in enumerate(self._tasks)
         ]
         yield SelectionList[int](*selections, id="task-list")
-        yield Static(_FOOTER_LEGEND, id="task-legend")
+        yield Static(_FOOTER_LEGEND, id="task-legend", markup=False)
 
     def on_mount(self) -> None:
         """Focus the task list on mount so keyboard navigation works immediately."""

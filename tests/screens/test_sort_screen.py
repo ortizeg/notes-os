@@ -35,6 +35,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+from textual.widgets import Static
+
 from notes_os.app import NotesOSApp
 from notes_os.backup import BackingUpNotesRepository, BackupManager
 from notes_os.backup_models import Backup
@@ -287,6 +289,35 @@ async def test_sc2_projects_folder_drill(tui_config: SorterConfig) -> None:
         # Session moved-count
         summary = sort_screen._session.summary()
         assert summary.moved == 1, f"Expected session.moved == 1, got {summary.moved}"
+
+
+async def test_category_prompt_renders_bracket_shortcuts_literally(
+    tui_config: SorterConfig,
+) -> None:
+    """Regression: the '[P]rojects [A]reas …' prompt must keep its literal brackets.
+
+    The #prompt Static is created with ``markup=False``; without it Textual would
+    parse '[P]', '[A]', '[R]', '[S]' as console-markup tags and strip them, eating
+    the first letter of each option ('rojects reas esources …').
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = Note(id="bp-1", title="A Note", body="<p>body</p>", preview="body")
+    structure = _make_projects_structure()
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, [note], structure)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        prompt_text = str(app.screen.query_one("#prompt", Static).render())
+        assert "[P]rojects" in prompt_text, prompt_text
+        assert "[A]reas" in prompt_text, prompt_text
+        assert "[S]kip" in prompt_text, prompt_text
 
 
 # ---------------------------------------------------------------------------
