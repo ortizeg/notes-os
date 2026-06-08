@@ -22,6 +22,10 @@ full keyboard-driven TUI.  It owns:
   06-02/06-03/06-04 MUST follow this same convention: add screen-local bindings
   to the screen class, not to ``NotesOSApp``.
 
+- **Quit-confirm guard (TUI-05 / T-06-11)**: when a sort session is in progress
+  (``sort_in_progress`` is ``True``), ``Q`` presents a ``ConfirmQuitModal``
+  before exiting.  On Home/idle ``Q`` exits immediately.
+
 ``main()`` is the ``notes`` CLI entry point (``notes_os.app:main`` in
 ``pyproject.toml``).  It configures logging, resolves the package version, and
 calls ``NotesOSApp().run()`` to start the event loop.
@@ -36,6 +40,8 @@ from typing import TYPE_CHECKING, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
+from textual.screen import ModalScreen
+from textual.widgets import Button, Label
 
 from notes_os.screens.home import HomeScreen
 from notes_os.screens.sort import SortScreen
@@ -55,6 +61,64 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _CSS_PATH: Path = Path(__file__).parent / "app.tcss"
+
+
+# ---------------------------------------------------------------------------
+# ConfirmQuitModal — shown by action_quit when a sort session is in progress
+# ---------------------------------------------------------------------------
+
+
+class ConfirmQuitModal(ModalScreen[bool]):
+    """Minimal two-button confirm modal for guarding quit during a sort session.
+
+    Presents a message and Yes / No buttons.  Dismissed with ``True`` (user
+    confirmed quit) or ``False`` (user cancelled).  Does NOT include
+    ``Header`` or ``Footer`` widgets — those raise ``NoMatches`` in modal
+    context (TUI discovery from 06-03).
+
+    Bindings:
+        - ``Y`` / ``y`` → confirm quit (dismiss ``True``).
+        - ``N`` / ``n`` → cancel (dismiss ``False``).
+        - ``Escape`` → cancel (dismiss ``False``).
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("y", "confirm", "Yes, quit", show=True),
+        Binding("n", "cancel", "No, stay", show=True),
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        """Lay out the confirm message and Yes/No buttons.
+
+        Yields:
+            Label with the prompt message, two Buttons (Yes / No).
+        """
+        yield Label(
+            "A sort session is in progress.\nQuit anyway? (Y / N)",
+            id="confirm-quit-label",
+        )
+        yield Button("Yes — quit", id="confirm-quit-yes", variant="error")
+        yield Button("No — stay", id="confirm-quit-no", variant="primary")
+
+    def action_confirm(self) -> None:
+        """Dismiss the modal with ``True`` — user chose to quit."""
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        """Dismiss the modal with ``False`` — user chose to stay."""
+        self.dismiss(False)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle Yes/No button clicks.
+
+        Args:
+            event: The :class:`~textual.widgets.Button.Pressed` event.
+        """
+        if event.button.id == "confirm-quit-yes":
+            self.dismiss(True)
+        elif event.button.id == "confirm-quit-no":
+            self.dismiss(False)
 
 
 class NotesOSApp(App[None]):
@@ -86,6 +150,9 @@ class NotesOSApp(App[None]):
         backup_manager: The :class:`~notes_os.backup.BackupManager` used for
             backup-status queries in the status panel (and for pre-write backups
             when the production repo is active).
+        sort_in_progress: Set to ``True`` by :class:`~notes_os.screens.sort.SortScreen`
+            when the first note is processed; reset to ``False`` at session finish.
+            Drives the :meth:`action_quit` guard (TUI-05 / T-06-11 mitigation).
 
     Args:
         config: Optional :class:`~notes_os.config.SorterConfig`.  Built from
@@ -163,6 +230,10 @@ class NotesOSApp(App[None]):
 
         self.repo: NotesRepositoryProtocol = repo
 
+        # Quit-confirm guard flag — set True by SortScreen on first record;
+        # reset to False at _finish().  Drives action_quit (TUI-05 / T-06-11).
+        self.sort_in_progress: bool = False
+
         logger.debug(
             "NotesOSApp initialised — repo=%s, backup_dir=%s",
             type(self.repo).__name__,
@@ -177,6 +248,40 @@ class NotesOSApp(App[None]):
         subsequent actions.
         """
         self.push_screen("home")
+
+    async def action_quit(self) -> None:
+        """Quit the app, with a confirm guard when a sort session is in progress.
+
+        TUI-05 / T-06-11 mitigation: a bare ``Q`` quits immediately from
+        Home/idle.  When ``self.sort_in_progress`` is ``True``, a
+        :class:`ConfirmQuitModal` is pushed first.  If the user confirms
+        (dismisses with ``True``), :meth:`~textual.app.App.exit` is called.
+        If the user cancels (dismisses with ``False``), the app continues.
+
+        Overrides ``App.action_quit`` (which is also ``async``) to inject the
+        session-guard logic before delegating to ``self.exit()``.
+        """
+        if not self.sort_in_progress:
+            logger.debug("action_quit: no session in progress — exiting immediately")
+            self.exit()
+            return
+
+        logger.debug("action_quit: sort session in progress — showing confirm modal")
+
+        def _on_confirm(confirmed: bool | None) -> None:
+            """Handle the ConfirmQuitModal result.
+
+            Args:
+                confirmed: ``True`` when the user chose to quit; ``False`` or
+                    ``None`` to continue the session.
+            """
+            if confirmed:
+                logger.info("action_quit: user confirmed quit during active session")
+                self.exit()
+            else:
+                logger.debug("action_quit: user cancelled quit — resuming session")
+
+        self.push_screen(ConfirmQuitModal(), _on_confirm)
 
     def action_help(self) -> None:
         """Dispatch help request to the active screen.

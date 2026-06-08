@@ -248,6 +248,8 @@ class SortScreen(Screen[None]):
         if result.action == RouteAction.SKIP:
             self._session.record_skip(note.id)
             logger.debug("Note %r skipped", note.id)
+            # Signal to the app that a session is in progress (T-06-11 mitigation)
+            self.app.sort_in_progress = True  # type: ignore[attr-defined]
             self._advance()
             return
 
@@ -375,6 +377,8 @@ class SortScreen(Screen[None]):
             if result.folder_path is not None:
                 self._session.record_move(note.id, result.folder_path)
                 logger.debug("Note %r moved to %s", note.id, result.display_path)
+                # Signal to the app that a session is in progress (T-06-11 mitigation)
+                self.app.sort_in_progress = True  # type: ignore[attr-defined]
                 extraction_deferred = self._after_move(note)
         except NotesOSError as exc:
             self._session.record_error(note.id, str(exc))
@@ -477,10 +481,14 @@ class SortScreen(Screen[None]):
         Computes the :class:`~notes_os.sorter.session.SessionSummary`, renders
         it in the note-preview panel, writes the audit log via
         ``_session.write_log()``, and offers navigation back to HomeScreen.
+        Resets ``app.sort_in_progress`` to ``False`` so a subsequent ``Q``
+        quits directly (session is complete; T-06-11 guard no longer needed).
         """
         app: NotesOSApp = self.app  # type: ignore[assignment]
         summary = self._session.summary()
         log_path = self._session.write_log(app.app_config.log_dir)
+        # Reset quit-confirm guard — session is complete (T-06-11 mitigation)
+        app.sort_in_progress = False
         logger.info("SortScreen: session complete — log written to %s", log_path)
 
         summary_text = (

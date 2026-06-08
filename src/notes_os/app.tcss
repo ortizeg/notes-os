@@ -89,6 +89,33 @@ Screen {
     padding-bottom: 1;
 }
 
+/* ConfirmQuitModal */
+
+ConfirmQuitModal {
+    align: center middle;
+}
+
+#confirm-quit-label {
+    width: 50;
+    height: auto;
+    border: solid $warning;
+    padding: 1 2;
+    margin: 0 1 1 1;
+    color: $text;
+    text-align: center;
+    content-align: center middle;
+}
+
+#confirm-quit-yes {
+    width: 20;
+    margin: 0 1;
+}
+
+#confirm-quit-no {
+    width: 20;
+    margin: 0 1;
+}
+
 /* TaskExtractScreen modal */
 
 TaskExtractScreen {
