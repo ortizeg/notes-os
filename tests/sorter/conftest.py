@@ -154,9 +154,11 @@ def sample_notes() -> list[Note]:
         Note(
             id="id2",
             # Title uses Unicode curly apostrophe (U+2019) and accented chars — intentional test data.
-            title="It’s Café Day — Notes",  # noqa: RUF001  # intentional: tests Unicode-title handling
+            title="It’s Café Day — Notes",  # intentional: tests Unicode-title handling
             body="<p>Agenda for Monday&rsquo;s meeting</p>",
-            preview="Agenda for Monday’s meeting"[: cfg.preview_length],  # noqa: RUF001  # intentional: Unicode preview
+            preview="Agenda for Monday’s meeting"[
+                : cfg.preview_length
+            ],  # intentional: Unicode preview
         ),
         Note(
             id="id3",

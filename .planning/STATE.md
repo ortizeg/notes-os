@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Completed 03-backup plan 02 (restore + prune + integration tests)
-last_updated: "2026-06-07T00:35:00Z"
-last_activity: 2026-06-07 -- Phase 03 fully executed on feat/backup; BackupManager.restore+prune (BKUP-04+05), backup.py 100% cov, integration test against tmp_path
+status: completed
+stopped_at: Completed 04-sorting-core 04-05-PLAN.md
+last_updated: "2026-06-07T22:31:38.990Z"
+last_activity: 2026-06-07 -- Phase 04 plan 04 executed; SESS-01/02/03 complete; SortSession + SessionSummary + write_log; 243 unit tests, 99.52% coverage
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
-  percent: 50
+  completed_phases: 4
+  total_plans: 13
+  completed_plans: 13
+  percent: 67
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-07)
 
 ## Current Position
 
-Phase: 03 (Backup) — COMPLETE ✓ (verified 6/6; backup.py 100% cov; overall 99.71%)
-Plan: 2 of 2 complete
-Status: Phase 3 done on feat/backup — BackupManager full API (create/list/restore/prune), BackingUpNotesRepository decorator, integration lifecycle test
-Last activity: 2026-06-07 -- Phase 03 executed; BKUP-01 through BKUP-06 complete; ruff/mypy/pytest green; 103 unit tests (5 integration deselected in CI)
+Phase: 04 (Sorting Core) — In Progress (4/5 plans complete)
+Plan: 5 of 5 complete
+Status: Phase 4 plan 04 done — SortSession + frozen SessionSummary + write_log; 243 tests, 99.52% cov; 1 plan remaining (04-05 controller)
+Last activity: 2026-06-07 -- Phase 04 plan 04 executed; SESS-01/02/03 complete; SortSession + SessionSummary + write_log; 243 unit tests, 99.52% coverage
 
 Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 
@@ -59,6 +59,11 @@ Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 | Phase 02-applescript-bridge P03 | 15 minutes | 3 tasks | 2 files |
 | Phase 03-backup P01 | - | 3 tasks | 3 files |
 | Phase 03-backup P02 | 35 minutes | 3 tasks | 3 files |
+| Phase 04-sorting-core P01 | 157 | 3 tasks | 3 files |
+| Phase 04-sorting-core P02 | 394 | 3 tasks | 3 files |
+| Phase 04-sorting-core P03 | 218 | 2 tasks | 3 files |
+| Phase 04-sorting-core P04 | ~8 min | 2 tasks (TDD) | 3 files |
+| Phase 04-sorting-core P05 | 371 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -89,6 +94,20 @@ Recent decisions affecting current work:
 - [Phase 03-backup]: import builtins inside TYPE_CHECKING block to fix mypy name-collision where self.list() shadowed builtin list[] in return type annotation under strict mode
 - [Phase 02-applescript-bridge]: RS/US delimiter constants: _FIELD_SEP=chr(31)/_RECORD_SEP=chr(30) for tamper-resistant AppleScript output parsing; plan 02-03 must import from notes.py
 - [Phase ?]: 100% notes.py coverage from mocked unit suite alone; sentinel tests patch _run_osascript not subprocess.run; MockNotesRepository imported under TYPE_CHECKING
+- [Phase ?]: SorterConfig composes BridgeConfig + BackupConfig as nested fields (CONF-02)
+- [Phase ?]: load_config raises ConfigError for malformed TOML; pydantic.ValidationError propagates for schema-invalid input (SC1 enforced)
+- [Phase ?]: notes_os.config added to mypy disallow_any_explicit=false override in pyproject.toml
+- [Phase ?]: Router is stateless between calls — all context passed explicitly as RouteResult + Note arguments; no shared mutable state
+- [Phase ?]: year_provider Callable injected on Router with default datetime.now().year — tests override for determinism (ROUT-02)
+- [Phase ?]: notes_os.sorter.router added to mypy override disallow_any_explicit=false — RouteResult BaseModel inherits explicit Any from Pydantic internals
+- [Phase 04-sorting-core]: notes_os.sorter.ui added to mypy disallow_any_explicit=false override — Any intentional for duck-typed note/summary params in SortUIProtocol
+- [Phase 04-sorting-core]: RichSortUI uses injectable Console/key_reader/line_reader — tests never block on real terminal I/O (Protocol-Seam + Injectable-IO patterns)
+- [Phase 04-sorting-core]: show_summary(summary: Any) uses duck-typed attribute access for forward-compat 04-04 SessionSummary seam; falls back to str()
+- [Phase 04-sorting-core]: SortSession is a plain mutable class (not Pydantic); only SessionSummary snapshot is frozen — mutable-accumulator + immutable-snapshot pattern
+- [Phase 04-sorting-core]: write_log clock injected via optional `now: datetime | None = None` kwarg — avoids frozen-default anti-pattern; tests pass fixed datetime
+- [Phase 04-sorting-core]: SessionSummary.total is a @property (moved+skipped+errors) — not stored; stays correct without a second mutation surface
+- [Phase 04-sorting-core]: notes_os.sorter.session added to pyproject.toml mypy disallow_any_explicit=false override (SessionSummary inherits BaseModel Any API)
+- [Phase ?]: SortController fully DI; build_default_controller wraps AppleScriptNotesRepository in BackingUpNotesRepository (SC4 backup-then-move)
 
 ### Pending Todos
 
@@ -101,6 +120,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T00:35:00Z
-Stopped at: Completed 03-backup plan 02 (restore + prune + integration tests)
+Last session: 2026-06-07T22:31:38.986Z
+Stopped at: Completed 04-sorting-core 04-05-PLAN.md
 Resume file: None

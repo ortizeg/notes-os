@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Scaffold** — Monorepo, pixi env, CI, pre-commit, branch protection, M2-M4 stubs
 - [x] **Phase 2: AppleScript Bridge** — Read inbox, discover PARA structure, move note, ensure folder, typed errors, NotesRepositoryProtocol (completed 2026-06-07)
 - [x] **Phase 3: Backup** — Auto-backup-before-write, create/list/restore/prune, BackupError (completed 2026-06-07)
-- [ ] **Phase 4: Sorting Core** — Config (Pydantic V2), PARA router state machine, terminal UI primitives, session tracking
+- [x] **Phase 4: Sorting Core** — Config (Pydantic V2), PARA router state machine, terminal UI primitives, session tracking (completed 2026-06-07)
 - [ ] **Phase 5: Task Extraction** — Heuristic action-item scanner, user selection, Markdown output, off by default
 - [ ] **Phase 6: Textual TUI Integration** — Full Textual app wired end-to-end via `notes` entry point
 
@@ -104,15 +104,15 @@ Plans:
   4. Move confirmation displays the full resolved PARA path (e.g. `Projects › Website Redesign › Research`) before the backup-then-move executes
   5. After the session, a summary shows moved/skipped/error counts and a log file is written to `~/.notes-os/logs/YYYY-MM-DD_HHMMSS.log`
 
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
 
-- [ ] 04-01: `config.py` — frozen Pydantic V2 models, TOML loader, sensible defaults, mypy strict
-- [ ] 04-02: `router.py` — PARA routing state machine (SHOW_NOTE → AWAIT_CATEGORY → AWAIT_FOLDER → AWAIT_SUBFOLDER → CONFIRM_MOVE), archive auto-year, `[B]` back, 95% coverage
-- [ ] 04-03: `ui.py` — note title + Markdown preview (HTML-stripped, configurable length), single-keystroke capture (readchar), inbox count display, `?` inline help
-- [ ] 04-04: `session.py` — moved/skipped/error tracking, end-of-session summary, log file writer
-- [ ] 04-05: Integration — wire config + router + ui + session into end-to-end CLI sort flow, full test suite
+- [x] 04-01-PLAN.md — `config.py` — frozen Pydantic V2 SorterConfig composing BridgeConfig+BackupConfig, TOML loader + defaults, mypy override (wave 1)
+- [x] 04-02-PLAN.md — `router.py` — UI-agnostic PARA routing state machine (SHOW_NOTE → AWAIT_CATEGORY → AWAIT_FOLDER → AWAIT_SUBFOLDER → CONFIRM_MOVE), archive auto-year (injected clock), `[B]` back, ≥95% coverage (wave 2)
+- [x] 04-03-PLAN.md — `ui.py` — thin Rich/readchar layer: title + Markdown preview, single-keystroke capture, numbered choices, `?` help, inbox count, SortUIProtocol for fakes (wave 2)
+- [x] 04-04-PLAN.md — `session.py` — moved/skipped/error tracking, frozen SessionSummary, log writer to `~/.notes-os/logs/YYYY-MM-DD_HHMMSS.log` (wave 3)
+- [x] 04-05-PLAN.md — Integration — SortController wiring config + backing-up repo + router + ui + session into an end-to-end testable sort flow + full suite (wave 4)
 
 ---
 
@@ -171,6 +171,6 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. Scaffold | 3/3 | Complete | 2026-06-07 |
 | 2. AppleScript Bridge | 3/3 | Complete   | 2026-06-07 |
 | 3. Backup | 2/2 | Complete | 2026-06-07 |
-| 4. Sorting Core | 0/5 | Not started | - |
+| 4. Sorting Core | 5/5 | Complete   | 2026-06-07 |
 | 5. Task Extraction | 0/2 | Not started | - |
 | 6. Textual TUI Integration | 0/4 | Not started | - |
