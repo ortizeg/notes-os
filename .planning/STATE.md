@@ -21,14 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-07)
 
 **Core value:** A person can triage their Apple Notes inbox into PARA folders with single keystrokes — fast, mouse-free, and non-destructive — with the Notes database backed up before every write.
-**Current focus:** Phase 03 — Backup (next)
+**Current focus:** Milestone 1 COMPLETE & validated. Next: M2 — Distillation Engine (`/gsd-new-milestone`).
 
 ## Current Position
 
-Phase: 06 (Textual TUI Integration) — COMPLETE (4/4 plans complete)
-Plan: 4 of 4 complete — Milestone 1 DONE
-Status: Phase 06 plan 04 done — ConfirmQuitModal quit-confirm guard; sort_in_progress flag on NotesOSApp; SC4 navigation Pilot suite (10 tests); E2E Home→Sort→TaskExtract→finish walk proving SC1+SC2+SC3; integration smoke test (deselected in CI); 329 tests 92% coverage
-Last activity: 2026-06-08 -- Phase 06 plan 04 executed; ConfirmQuitModal + sort_in_progress guard; SC4 nav Pilot suite (10 tests); E2E Home→Sort→TaskExtract→finish walk; integration smoke; 329 tests 92% coverage
+Milestone 1 (PARA Notes Sorter) — COMPLETE ✓ and VALIDATED against real Apple Notes (2026-06-08).
+All 6 phases / 19 plans done; ~356 tests, ~92% coverage; PRs #1–#6.
+Real-Notes UAT surfaced and fixed 8 issues the mocked suite couldn't catch (blank screen, quit hang,
+slow inbox, markup, archive crash, FDA permission, same-second backup ENOTEMPTY, multi-digit folder + Enter-as-CR).
+Awaiting: merge PR #6 (feat/tui) → main, then optional `/gsd-complete-milestone` archive.
 
 Progress: [██████████] 100% (6 of 6 phases complete) — Milestone 1 COMPLETE
 

@@ -1,5 +1,5 @@
 ---
-status: fixing
+status: resolved
 trigger: "TUI shows blank screen — HomeScreen.on_mount and SortScreen.on_mount call get_inbox_notes() synchronously, blocking the Textual event loop before first paint"
 created: 2026-06-08T00:00:00Z
 updated: 2026-06-08T00:00:00Z
@@ -59,5 +59,5 @@ started: "Always broken when used with real AppleScript backend; MockNotesReposi
 
 root_cause: "HomeScreen.on_mount and SortScreen.on_mount call blocking I/O (get_inbox_notes() via osascript subprocess, backup_manager.list()) synchronously on Textual's event-loop thread, preventing first paint"
 fix: "Move I/O calls to @work(thread=True, exclusive=True) methods; set placeholder text in on_mount; marshal UI updates via self.app.call_from_thread(); guard on_key with _loading flag in SortScreen"
-verification: ""
+verification: "329 tests passed, 92% coverage. ruff check, ruff format --check, mypy strict all clean."
 files_changed: [src/notes_os/screens/home.py, src/notes_os/screens/sort.py, tests/screens/test_home_screen.py, tests/screens/test_sort_screen.py, tests/screens/test_navigation.py, tests/screens/test_end_to_end.py]
