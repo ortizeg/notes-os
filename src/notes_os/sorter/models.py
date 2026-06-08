@@ -24,6 +24,27 @@ Example:
 """
 
 
+class NoteRef(BaseModel):
+    """Lightweight reference to an Apple Notes note — id and title only.
+
+    Used by the fast bulk-fetch path (``get_inbox_note_refs``) that avoids
+    fetching the heavy HTML body for every note upfront.  The TUI loads refs
+    immediately on mount and then lazily fetches each note's full body via
+    ``get_note(id)`` as the user navigates.
+
+    Attributes:
+        id: The opaque unique identifier returned by Apple Notes
+            (e.g. ``"x-coredata://..."``) used to address the note in
+            subsequent AppleScript operations.
+        title: The note's display name.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    title: str
+
+
 class Note(BaseModel):
     """An Apple Notes note surfaced to the sort session.
 

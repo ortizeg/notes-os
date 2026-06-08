@@ -420,6 +420,57 @@ def test_decorator_read_methods_no_backup(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test: new lazy-loading read passthroughs trigger zero create() calls
+# ---------------------------------------------------------------------------
+
+
+def test_decorator_get_inbox_note_refs_no_backup(tmp_path: Path) -> None:
+    """get_inbox_note_refs() passes through to inner with no backup.create() call."""
+    from notes_os.sorter.models import NoteRef
+
+    cfg = make_config(tmp_path)
+    inner = make_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    refs = repo.get_inbox_note_refs()
+
+    assert spy.create_calls == [], "get_inbox_note_refs must not trigger backup"
+    assert isinstance(refs, list), "should return a list"
+    # MockNotesRepository seeded with one note (n1)
+    assert len(refs) == 1
+    assert isinstance(refs[0], NoteRef)
+    assert refs[0].id == "n1"
+
+
+def test_decorator_get_note_no_backup(tmp_path: Path) -> None:
+    """get_note() passes through to inner with no backup.create() call."""
+    cfg = make_config(tmp_path)
+    inner = make_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    note = repo.get_note("n1")
+
+    assert spy.create_calls == [], "get_note must not trigger backup"
+    assert note.id == "n1"
+    assert note.title == "T"
+
+
+def test_decorator_count_inbox_notes_no_backup(tmp_path: Path) -> None:
+    """count_inbox_notes() passes through to inner with no backup.create() call."""
+    cfg = make_config(tmp_path)
+    inner = make_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    count = repo.count_inbox_notes()
+
+    assert spy.create_calls == [], "count_inbox_notes must not trigger backup"
+    assert count == 1  # one seeded note
+
+
+# ---------------------------------------------------------------------------
 # Test 9: backup failure aborts move (SC5)
 # ---------------------------------------------------------------------------
 

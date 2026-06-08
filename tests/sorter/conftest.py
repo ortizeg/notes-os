@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from notes_os.exceptions import FolderNotFoundError, NotesMoveError
-from notes_os.sorter.models import BridgeConfig, FolderPath, Note, ParaStructure
+from notes_os.sorter.models import BridgeConfig, FolderPath, Note, NoteRef, ParaStructure
 from notes_os.sorter.notes import NotesRepositoryProtocol
 
 
@@ -74,6 +74,40 @@ class MockNotesRepository:
             to the returned list do not affect internal state.
         """
         return list(self._inbox)
+
+    def get_inbox_note_refs(self) -> list[NoteRef]:
+        """Return lightweight refs (id + title) for the current in-memory inbox.
+
+        Returns:
+            A new list of :class:`~notes_os.sorter.models.NoteRef` objects
+            derived from the seeded inbox notes.
+        """
+        return [NoteRef(id=n.id, title=n.title) for n in self._inbox]
+
+    def get_note(self, note_id: str) -> Note:
+        """Return the seeded note with the given id, or raise NotesMoveError.
+
+        Args:
+            note_id: The opaque note identifier to look up.
+
+        Returns:
+            The :class:`~notes_os.sorter.models.Note` from the seeded inbox.
+
+        Raises:
+            NotesMoveError: If ``note_id`` is not found in the seeded inbox.
+        """
+        for note in self._inbox:
+            if note.id == note_id:
+                return note
+        raise NotesMoveError(note_id)
+
+    def count_inbox_notes(self) -> int:
+        """Return the count of notes currently in the in-memory inbox.
+
+        Returns:
+            The number of notes in the inbox.
+        """
+        return len(self._inbox)
 
     def get_para_structure(self) -> ParaStructure:
         """Return the seed PARA structure.

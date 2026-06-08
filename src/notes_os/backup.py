@@ -57,7 +57,7 @@ from notes_os.exceptions import BackupError
 if TYPE_CHECKING:
     import builtins
 
-    from notes_os.sorter.models import FolderPath, Note, ParaStructure
+    from notes_os.sorter.models import FolderPath, Note, NoteRef, ParaStructure
     from notes_os.sorter.notes import NotesRepositoryProtocol
 
 
@@ -512,6 +512,33 @@ class BackingUpNotesRepository:
             The result of the inner repository's ``get_para_structure()``.
         """
         return self._inner.get_para_structure()
+
+    def get_inbox_note_refs(self) -> list[NoteRef]:
+        """Return inbox note refs from the inner repository with no backup.
+
+        Returns:
+            The result of the inner repository's ``get_inbox_note_refs()``.
+        """
+        return self._inner.get_inbox_note_refs()
+
+    def get_note(self, note_id: str) -> Note:
+        """Return a single note's full content from the inner repository with no backup.
+
+        Args:
+            note_id: The opaque Apple Notes note identifier.
+
+        Returns:
+            The result of the inner repository's ``get_note(note_id)``.
+        """
+        return self._inner.get_note(note_id)
+
+    def count_inbox_notes(self) -> int:
+        """Return inbox note count from the inner repository with no backup.
+
+        Returns:
+            The result of the inner repository's ``count_inbox_notes()``.
+        """
+        return self._inner.count_inbox_notes()
 
     # ------------------------------------------------------------------
     # Write operations — backup first, then delegate.

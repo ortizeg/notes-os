@@ -15,14 +15,32 @@ it holds the per-note routing context (:attr:`_router_state`, :attr:`_prev`)
 that the old controller held on its call stack and advances through Router
 transitions as discrete, non-blocking event handlers.
 
+Lazy-loading architecture (performance fix for large inboxes):
+    Previously ``_load_inbox`` called ``get_inbox_notes()`` which fetches all
+    HTML bodies upfront — O(N) Apple Events, slow on a large inbox.  The new
+    approach:
+
+    1. ``_load_inbox_refs`` (fast): calls ``get_inbox_note_refs()`` — two
+       Apple Events total, returns id+title only.
+    2. ``_load_note_body(ref_id, index)`` (lazy per-note): calls
+       ``get_note(ref_id)`` — one Apple Event per note, fired on demand.
+    3. Prefetch: when a note body is loaded, the NEXT note's body is also
+       prefetched into ``_note_cache`` in the background (cache-warm for
+       instant next-note render).
+
+    The Router and move operations only need ``note.id`` — moves are never
+    blocked on body load.  Body load is cosmetic (preview display only).
+
 State the screen holds (mirrors SortController call-stack context):
 - ``_router`` — the stateless PARA state machine; stateless between calls.
 - ``_session`` — accumulates moves/skips/errors for this screen visit.
-- ``_notes`` — snapshot of the inbox taken in ``_load_inbox`` (thread worker).
-- ``_index`` — pointer into ``_notes``; advances after each note is done.
+- ``_refs`` — snapshot of inbox refs taken in ``_load_inbox_refs`` (fast worker).
+- ``_index`` — pointer into ``_refs``; advances after each note is done.
+- ``_note_cache`` — dict mapping ref.id → full Note (body + preview loaded).
+- ``_current_note`` — full Note for the current ref (None if body not loaded yet).
 - ``_router_state`` — current state-machine state (AWAIT_CATEGORY etc.).
 - ``_prev`` — last ``RouteResult`` carrying folder/subfolder context.
-- ``_loading`` — ``True`` while the inbox snapshot is being fetched off-thread;
+- ``_loading`` — ``True`` while inbox refs are being fetched off-thread;
   ``on_key`` is a safe no-op while this flag is set.
 
 TUI-05 navigation (consistent with HomeScreen):
@@ -37,9 +55,9 @@ Threat mitigations:
   ``try/except NotesOSError`` → ``record_error`` + advance (mirrors T-04-10).
 - T-06-06 (invalid keystroke causing bad state): Router returns no-op
   RouteResult for unknown keys / out-of-range indices; screen re-renders only.
-- T-06-07 (blocking event loop): ``get_inbox_notes()`` is called in
-  ``_load_inbox`` (a ``@work(thread=True)`` worker) off the event-loop thread;
-  ``on_key`` is guarded by ``_loading`` until the worker completes.
+- T-06-07 (blocking event loop): ``get_inbox_note_refs()`` is called in
+  ``_load_inbox_refs`` (a ``@work(thread=True)`` worker) off the event-loop
+  thread; ``on_key`` is guarded by ``_loading`` until the worker completes.
 - T-06-08 (extraction running when disabled): ``_after_move`` first line
   returns ``False`` immediately when ``task_extraction`` is ``False``; the
   disabled path never imports TaskExtractScreen or TaskWriter.
@@ -79,7 +97,7 @@ if TYPE_CHECKING:
 
     from notes_os.app import NotesOSApp
     from notes_os.sorter.extractor import ExtractedTask
-    from notes_os.sorter.models import Note
+    from notes_os.sorter.models import Note, NoteRef
 
 
 logger = logging.getLogger(__name__)
@@ -110,9 +128,16 @@ class SortScreen(Screen[None]):
     immediately so the Textual event loop stays responsive.
 
     ``on_mount`` sets a transient "Loading inbox…" state immediately, then
-    starts :meth:`_load_inbox` (a ``@work(thread=True)`` worker) to fetch
-    the inbox snapshot off the event-loop thread.  ``on_key`` is guarded by
-    ``_loading`` and is a safe no-op while the worker is running.
+    starts :meth:`_load_inbox_refs` (a ``@work(thread=True)`` worker) to
+    fetch the inbox refs (id+title only, NO bodies) off the event-loop
+    thread.  ``on_key`` is guarded by ``_loading`` and is a safe no-op
+    while the worker is running.
+
+    Per-note body loading is lazy: when the screen renders a note, if the
+    full body is not yet in ``_note_cache`` it shows "Loading preview…" and
+    starts a background worker to fetch just that note's body.  A prefetch
+    worker also fetches the NEXT note's body in the background so the user
+    typically sees an instant render when they advance.
 
     All live data comes from ``self.app.repo`` (the backup-wrapped repository
     from the NotesOSApp DI seam) and ``self.app.app_config``.
@@ -137,10 +162,11 @@ class SortScreen(Screen[None]):
     ) -> None:
         """Initialise SortScreen instance attributes.
 
-        Router, session, notes snapshot, and navigation state are all
-        initialised here as sentinel values and populated in ``_load_inbox``
-        (the background thread worker started by ``on_mount``) after the app
-        is attached and ``self.app.repo`` is available.
+        Router, session, refs snapshot, and navigation state are all
+        initialised here as sentinel values and populated in
+        ``_load_inbox_refs`` (the background thread worker started by
+        ``on_mount``) after the app is attached and ``self.app.repo`` is
+        available.
 
         Args:
             year_provider: Optional fixed-year lambda for tests.
@@ -152,12 +178,17 @@ class SortScreen(Screen[None]):
         self._year_provider = year_provider
         self._router: Router | None = None
         self._session: SortSession = SortSession()
-        self._notes: list[Note] = []
+        # Lightweight refs — id+title only (populated by _load_inbox_refs)
+        self._refs: list[NoteRef] = []
+        # Full Note cache — populated lazily as notes are viewed
+        self._note_cache: dict[str, Note] = {}
+        # Full Note for current position (None if body not yet loaded)
+        self._current_note: Note | None = None
         self._index: int = 0
         self._router_state: RouterState = RouterState.AWAIT_CATEGORY
         self._prev: RouteResult | None = None
         self._inbox_empty: bool = False
-        self._loading: bool = True  # True until _load_inbox worker completes
+        self._loading: bool = True  # True until _load_inbox_refs worker completes
 
     def compose(self) -> ComposeResult:
         """Lay out the sort-screen widgets.
@@ -177,11 +208,11 @@ class SortScreen(Screen[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Render a transient loading state and kick off inbox loading off-thread.
+        """Render a transient loading state and kick off inbox ref loading off-thread.
 
         Router and SortSession are initialised synchronously (cheap, no I/O).
-        ``get_inbox_notes()`` — the blocking ``osascript`` subprocess — is
-        deferred to :meth:`_load_inbox` (a ``@work(thread=True)`` worker) so
+        ``get_inbox_note_refs()`` — the bulk AppleScript fetch — is deferred
+        to :meth:`_load_inbox_refs` (a ``@work(thread=True)`` worker) so
         Textual can paint the screen before any AppleScript call completes.
         """
         app: NotesOSApp = self.app  # type: ignore[assignment]
@@ -193,59 +224,193 @@ class SortScreen(Screen[None]):
         )
         self._session = SortSession()
 
-        # Show a transient loading state while the inbox is fetched off-thread.
+        # Show a transient loading state while the inbox refs are fetched off-thread.
         self.query_one("#note-title", Static).update("Loading inbox…")
         self.query_one("#note-preview", Static).update("")
         self.query_one("#prompt", Static).update("")
         self.query_one("#progress", Static).update("")
 
         # Start the background worker; on_key is guarded by _loading=True.
-        self._load_inbox()
+        self._load_inbox_refs()
 
     @work(thread=True, exclusive=True)
-    def _load_inbox(self) -> None:
-        """Fetch the inbox snapshot off the event-loop thread.
+    def _load_inbox_refs(self) -> None:
+        """Fetch inbox note refs (id+title only) off the event-loop thread.
 
-        Calls ``app.repo.get_inbox_notes()`` in a background thread so the
-        blocking ``osascript`` subprocess does not stall Textual's event loop.
-        Once the snapshot is available, marshals state back to the main thread
-        via ``self.app.call_from_thread`` and renders the first note (or the
-        empty-inbox state).
+        Calls ``app.repo.get_inbox_note_refs()`` — two Apple Events total,
+        no HTML bodies.  Once refs are available, marshals state back to the
+        main thread via ``self.app.call_from_thread`` and renders the first
+        note (or the empty-inbox state).
 
         ``_loading`` is reset to ``False`` inside ``call_from_thread`` so
         ``on_key`` only becomes active after the inbox state is fully applied.
         """
         app: NotesOSApp = self.app  # type: ignore[assignment]
-        notes = app.repo.get_inbox_notes()
-        self.app.call_from_thread(self._apply_inbox, notes)
+        refs = app.repo.get_inbox_note_refs()
+        self.app.call_from_thread(self._apply_inbox_refs, refs)
 
-    def _apply_inbox(self, notes: list[Note]) -> None:
-        """Apply the inbox snapshot fetched by the thread worker.
+    def _apply_inbox_refs(self, refs: list[NoteRef]) -> None:
+        """Apply the inbox refs fetched by the thread worker.
 
         Called on the main thread via ``call_from_thread``.  Sets all
-        navigation state fields and renders the first note or the empty-inbox
-        state, then clears ``_loading`` to enable ``on_key``.
+        navigation state fields and renders the first note (kicking off its
+        body-load worker) or the empty-inbox state, then clears ``_loading``
+        to enable ``on_key``.
 
         Args:
-            notes: The inbox snapshot returned by ``get_inbox_notes()``.
+            refs: The inbox refs returned by ``get_inbox_note_refs()``.
         """
-        self._notes = notes
+        self._refs = refs
         self._index = 0
         self._router_state = RouterState.AWAIT_CATEGORY
         self._prev = None
+        self._current_note = None
         self._loading = False
 
-        if not self._notes:
+        if not self._refs:
             self._inbox_empty = True
             self._render_empty_inbox()
             return
 
         self._render_current_note()
 
+    # ------------------------------------------------------------------
+    # Lazy body loading
+    # ------------------------------------------------------------------
+
+    @work(thread=True)
+    def _load_note_body(self, ref_id: str, index: int) -> None:
+        """Fetch a single note's full body off the event-loop thread.
+
+        Args:
+            ref_id: The note id to fetch.
+            index: The inbox position this fetch is for.  Used to guard
+                against stale updates when the user has already moved on.
+        """
+        app: NotesOSApp = self.app  # type: ignore[assignment]
+        try:
+            note = app.repo.get_note(ref_id)
+        except Exception:
+            logger.warning(
+                "SortScreen: failed to load body for note %r",
+                ref_id,
+                exc_info=True,
+            )
+            return
+        self.app.call_from_thread(self._apply_note_body, note, index)
+
+    def _apply_note_body(self, note: Note, index: int) -> None:
+        """Cache the fetched note body and refresh the preview if still current.
+
+        Called on the main thread via ``call_from_thread`` from
+        :meth:`_load_note_body`.  Caches the note unconditionally (for
+        prefetch use), then re-renders the preview only when the user is
+        still viewing the same note position.
+
+        Args:
+            note: The fully-loaded note (id, title, body, preview).
+            index: The inbox position this note corresponds to.
+        """
+        self._note_cache[note.id] = note
+        if self._index == index:
+            self._current_note = note
+            # Re-render to show the now-loaded preview
+            self._render_current_note()
+            # Prefetch the next note while the user reads this one
+            self._prefetch_next(index)
+
+    def _prefetch_next(self, current_index: int) -> None:
+        """Start a background body-fetch for the note at ``current_index + 1``.
+
+        Called after a note's body loads (so the NEXT note is warm in the
+        cache when the user advances).  No-ops when already cached or at
+        the end of the inbox.
+
+        Args:
+            current_index: The currently-displayed note's inbox position.
+        """
+        next_index = current_index + 1
+        if next_index >= len(self._refs):
+            return
+        next_ref = self._refs[next_index]
+        if next_ref.id not in self._note_cache:
+            self._load_note_body(next_ref.id, next_index)
+
+    def _get_or_kick_note(self, ref_id: str, index: int) -> Note | None:
+        """Return the cached Note for *ref_id*, or start a background load.
+
+        If the note body is already in ``_note_cache`` returns it immediately.
+        Otherwise returns ``None`` and starts :meth:`_load_note_body` so the
+        preview will be updated when the fetch completes.
+
+        Args:
+            ref_id: The note id to look up.
+            index: The inbox index for the stale-update guard.
+
+        Returns:
+            The cached :class:`~notes_os.sorter.models.Note`, or ``None``
+            if the body has not been fetched yet.
+        """
+        if ref_id in self._note_cache:
+            return self._note_cache[ref_id]
+        # Not cached — kick off a background fetch and show placeholder
+        self._load_note_body(ref_id, index)
+        return None
+
+    # ------------------------------------------------------------------
+    # Note accessor helpers
+    # ------------------------------------------------------------------
+
+    def _current_ref(self) -> NoteRef | None:
+        """Return the current NoteRef, or None if the index is out of range.
+
+        Returns:
+            The :class:`~notes_os.sorter.models.NoteRef` at ``_index``, or
+            ``None`` when past the end of the inbox.
+        """
+        if 0 <= self._index < len(self._refs):
+            return self._refs[self._index]
+        return None
+
+    def _note_for_move(self) -> Note | None:
+        """Return a Note suitable for the Router move operations.
+
+        The Router's ``handle_*`` methods only use ``note.id`` and
+        ``note.preview`` (the latter for task extraction).  If the full body
+        is cached, return it.  If not yet loaded, construct a minimal Note
+        from the current ref (id + title; empty body/preview) — this is safe
+        because ``move_note`` only needs ``note.id``, and task extraction
+        falls back to an empty preview gracefully.
+
+        Returns:
+            A :class:`~notes_os.sorter.models.Note` for the current inbox
+            position, or ``None`` if past the end of the inbox.
+        """
+        ref = self._current_ref()
+        if ref is None:
+            return None
+        # Prefer the fully-loaded note from the cache
+        if self._current_note is not None:
+            return self._current_note
+        if ref.id in self._note_cache:
+            return self._note_cache[ref.id]
+        # Body not loaded yet — build a minimal Note from the ref.
+        # move_note only needs id; task extraction will use empty preview.
+        from notes_os.sorter.models import Note
+
+        return Note(id=ref.id, title=ref.title, body="", preview="")
+
+    # ------------------------------------------------------------------
+    # Key handling
+    # ------------------------------------------------------------------
+
     def on_key(self, event: events.Key) -> None:
         """Translate Textual key events into Router transitions.
 
-        No-ops silently while ``_loading`` is ``True`` (inbox not yet fetched).
+        No-ops silently while ``_loading`` is ``True`` (inbox refs not yet
+        fetched).  Keystrokes work even when the current note's body is still
+        loading — moves only need the note id which is in the ref.
+
         Dispatches based on the current ``_router_state`` once loaded:
         - ``AWAIT_CATEGORY``: category keys (P/A/R/X/S/?), or Esc/B back.
         - ``AWAIT_FOLDER``: numeric keys 1-9, or Esc/B back.
@@ -289,7 +454,7 @@ class SortScreen(Screen[None]):
         """
         if self._router is None:
             return
-        note = self._current_note()
+        note = self._note_for_move()
         if note is None:
             return
 
@@ -332,7 +497,7 @@ class SortScreen(Screen[None]):
         if self._router is None or self._prev is None:
             return
 
-        note = self._current_note()
+        note = self._note_for_move()
         if note is None:
             return
 
@@ -440,7 +605,9 @@ class SortScreen(Screen[None]):
                 logger.debug("Note %r moved to %s", note.id, result.display_path)
                 # Signal to the app that a session is in progress (T-06-11 mitigation)
                 self.app.sort_in_progress = True  # type: ignore[attr-defined]
-                extraction_deferred = self._after_move(note)
+                # Use cached note for extraction (has preview); fall back to whatever we have
+                note_for_extraction = self._note_cache.get(note.id, note)
+                extraction_deferred = self._after_move(note_for_extraction)
         except NotesOSError as exc:
             self._session.record_error(note.id, str(exc))
             logger.warning("SortScreen: error moving note %r: %s", note.id, exc)
@@ -464,7 +631,8 @@ class SortScreen(Screen[None]):
            callback will call it after the user resolves the modal.
 
         Args:
-            note: The note that was just moved.
+            note: The note that was just moved (prefer the cached full note for
+                accurate preview-based task extraction).
 
         Returns:
             ``True`` when TaskExtractScreen was pushed (advance deferred to
@@ -525,13 +693,15 @@ class SortScreen(Screen[None]):
     def _advance(self) -> None:
         """Increment the note pointer and render the next note or finish.
 
-        Resets ``_router_state`` to AWAIT_CATEGORY and clears ``_prev`` for the
-        next note.  When all notes are processed, calls :meth:`_finish`.
+        Resets ``_router_state`` to AWAIT_CATEGORY and clears ``_prev`` and
+        ``_current_note`` for the next note.  When all notes are processed,
+        calls :meth:`_finish`.
         """
         self._index += 1
         self._router_state = RouterState.AWAIT_CATEGORY
         self._prev = None
-        if self._index >= len(self._notes):
+        self._current_note = None
+        if self._index >= len(self._refs):
             self._finish()
         else:
             self._render_current_note()
@@ -567,28 +737,32 @@ class SortScreen(Screen[None]):
         self.query_one("#progress", Static).update(f"Processed {summary.total} note(s).")
         self._inbox_empty = True
 
-    def _current_note(self) -> Note | None:
-        """Return the current note, or None if the index is out of range.
-
-        Returns:
-            The :class:`~notes_os.sorter.models.Note` at ``_index``, or
-            ``None`` when the session is complete (past the last note).
-        """
-        if 0 <= self._index < len(self._notes):
-            return self._notes[self._index]
-        return None
-
     def _render_current_note(self) -> None:
-        """Update the four Static widgets to reflect the current note and state."""
-        note = self._current_note()
-        if note is None:
+        """Update the four Static widgets to reflect the current note and state.
+
+        Shows the note title from the ref (always available immediately) and
+        the preview from the full Note if loaded, or a "Loading preview…"
+        placeholder while the body-load worker is running.  Also kicks off
+        the body-load worker if this is the first render for the current note.
+        """
+        ref = self._current_ref()
+        if ref is None:
             return
 
-        total = len(self._notes)
+        total = len(self._refs)
         pos = self._index + 1
         self.query_one("#progress", Static).update(f"Note {pos} of {total}")
-        self.query_one("#note-title", Static).update(note.title)
-        self.query_one("#note-preview", Static).update(note.preview or "(no preview)")
+        self.query_one("#note-title", Static).update(ref.title)
+
+        # Try to get the full body from cache (or kick off a load)
+        if self._current_note is None:
+            self._current_note = self._get_or_kick_note(ref.id, self._index)
+
+        if self._current_note is not None:
+            preview_text = self._current_note.preview or "(no preview)"
+        else:
+            preview_text = "Loading preview…"
+        self.query_one("#note-preview", Static).update(preview_text)
 
         if self._router_state == RouterState.AWAIT_CATEGORY:
             self.query_one("#prompt", Static).update(_CATEGORY_PROMPT)

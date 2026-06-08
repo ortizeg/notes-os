@@ -156,11 +156,11 @@ class HomeScreen(Screen[None]):
         """
         app: NotesOSApp = self.app  # type: ignore[assignment]
 
-        # Inbox count
+        # Inbox count — use fast bulk-ref fetch (no HTML bodies fetched)
         inbox_count = 0
         try:
-            notes = app.repo.get_inbox_notes()
-            inbox_count = len(notes)
+            refs = app.repo.get_inbox_note_refs()
+            inbox_count = len(refs)
             inbox_text = f"Inbox: {inbox_count} note(s)"
         except Exception:
             logger.warning("HomeScreen: failed to fetch inbox count", exc_info=True)
