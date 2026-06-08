@@ -203,6 +203,30 @@ def test_create_copies_three_files(tmp_path: Path) -> None:
     datetime.datetime.strptime(ts_str, "%Y-%m-%d_%H-%M-%S")
 
 
+def test_create_twice_same_second_reuses_dir_no_enotempty(tmp_path: Path) -> None:
+    """Regression: two backups in the same second reuse the dir, never ENOTEMPTY.
+
+    A single archive move fires two backups microseconds apart (ensure_folder then
+    move_note). With second-precision dir names they collide; the second create()
+    previously raised ``BackupError: [Errno 66] Directory not empty`` on the
+    staging->dest rename. create() is now idempotent within a second: the second
+    call reuses the existing backup dir.
+    """
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = make_config(tmp_path, notes_db_dir=db_dir)
+    mgr = BackupManager(cfg)
+    fixed = datetime.datetime(2026, 6, 8, 12, 8, 33)
+
+    first = mgr.create(now=fixed)
+    second = mgr.create(now=fixed)  # same second — must not raise ENOTEMPTY
+
+    assert first.path == second.path, "second backup should reuse the first dir"
+    assert first.path.exists()
+    assert (first.path / NOTE_STORE_DB).exists()
+    # Exactly one backup directory exists for that second.
+    assert len(mgr.list()) == 1, [b.path.name for b in mgr.list()]
+
+
 # ---------------------------------------------------------------------------
 # Test 2: create with label
 # ---------------------------------------------------------------------------

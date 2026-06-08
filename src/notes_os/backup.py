@@ -168,7 +168,7 @@ class BackupManager:
     # Public API
     # ------------------------------------------------------------------
 
-    def create(self, label: str | None = None) -> Backup:
+    def create(self, label: str | None = None, *, now: datetime | None = None) -> Backup:
         """Copy the live Notes DB files into a new timestamped backup directory.
 
         The copy is performed into a ``<dest>._staging`` sibling directory first,
@@ -198,13 +198,22 @@ class BackupManager:
                 A staging directory left from a failed copy is removed before
                 raising; the final destination directory is never created.
         """
-        ts = datetime.now()
+        ts = now if now is not None else datetime.now()
         clean_label: str | None = label.strip() or None if label is not None else None
 
         # Build the dir name — may raise BackupError for bad labels.
         dir_name = self._dir_name(ts, clean_label)
         dest = self._config.backup_dir / dir_name
         staging = self._config.backup_dir / f"{dir_name}._staging"
+
+        # Idempotent within a single second: one logical move triggers TWO backups
+        # microseconds apart (ensure_folder then move_note), which collide on the
+        # second-precision dir name and would fail the staging->dest rename with
+        # ENOTEMPTY. The first backup already captures the pre-operation DB state
+        # (the correct rollback point for the whole move), so reuse it.
+        if dest.exists():
+            logger.debug("Backup for this second already exists, reusing: %s", dest)
+            return Backup(timestamp=ts, label=clean_label, path=dest)
 
         try:
             self._config.backup_dir.mkdir(parents=True, exist_ok=True)
