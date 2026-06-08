@@ -237,12 +237,17 @@ async def test_sc2_archive_move_backup_fired(tui_config: SorterConfig) -> None:
 
 
 async def test_sc2_projects_folder_drill(tui_config: SorterConfig) -> None:
-    """SC2b: route one note to Projects/General via 'p' then '1'.
+    """SC2b: route one note to Projects/General via 'p', '1', 'enter'.
 
     Steps:
     1. Build app with a Projects structure containing (General, Web).
-    2. Push SortScreen, press 'p' (enters AWAIT_FOLDER), then '1' (General).
+    2. Push SortScreen, press 'p' (enters AWAIT_FOLDER, highlight=0=General).
+    3. Press '1' to jump-highlight to General (already highlighted, no-op change).
+    4. Press 'enter' to confirm the selection.
     3. Assert: move recorded to ("Projects", "General"); session.moved == 1.
+
+    Digit keys now only jump-highlight; Enter is required to confirm (arrow-
+    highlight + Enter model so folders 10+ are reachable).
 
     Args:
         tui_config: SorterConfig fixture.
@@ -267,7 +272,7 @@ async def test_sc2_projects_folder_drill(tui_config: SorterConfig) -> None:
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        # Press 'p' → should enter AWAIT_FOLDER state
+        # Press 'p' → should enter AWAIT_FOLDER state (highlight defaults to 0 = General)
         await pilot.press("p")
         await pilot.pause()
 
@@ -276,8 +281,18 @@ async def test_sc2_projects_folder_drill(tui_config: SorterConfig) -> None:
             f"Expected AWAIT_FOLDER after 'p', got {sort_screen._router_state}"
         )
 
-        # Press '1' → selects General (first folder, no subfolders → immediate move)
+        # Press '1' → jump-highlights to General (index 0); does NOT move yet
         await pilot.press("1")
+        await pilot.pause()
+
+        # No move yet — digit only highlights
+        assert len(mock_inner.moves) == 0, f"Digit alone must not move; got {mock_inner.moves!r}"
+        assert sort_screen._router_state == RouterState.AWAIT_FOLDER, (
+            f"State must stay AWAIT_FOLDER after digit alone, got {sort_screen._router_state}"
+        )
+
+        # Press 'enter' → confirms highlighted option (General, index 0 → 1-based index 1)
+        await pilot.press("enter")
         await pilot.pause()
 
         # Assert move recorded
@@ -519,3 +534,165 @@ async def test_sc2_skip_increments_session(tui_config: SorterConfig) -> None:
         summary = sort_screen._session.summary()
         assert summary.skipped == 1, f"Expected session.skipped == 1, got {summary.skipped}"
         assert summary.moved == 0, f"Expected session.moved == 0, got {summary.moved}"
+
+
+# ---------------------------------------------------------------------------
+# Regression: folder 11 reachable via arrows; digit alone does not move
+# ---------------------------------------------------------------------------
+
+
+def _make_12_areas_structure() -> ParaStructure:
+    """Return a ParaStructure with Areas having 12 distinct leaf sub-folders.
+
+    Areas has no "General" so order = given order (Folder01..Folder12).
+    All sub-folders are leaf-level (no sub-subfolders), so selecting any one
+    results in an immediate MOVE.
+
+    Returns:
+        A :class:`~notes_os.sorter.models.ParaStructure` with 12 Areas folders.
+    """
+    areas_folders = tuple(f"Folder{i:02d}" for i in range(1, 13))  # Folder01..Folder12
+    return ParaStructure(
+        roots=("Projects", "Areas", "Resources", "Archive"),
+        subfolders={
+            "Projects": (),
+            "Areas": areas_folders,
+            "Resources": (),
+            "Archive": (),
+        },
+    )
+
+
+async def test_folder_11_reachable_via_arrows(tui_config: SorterConfig) -> None:
+    """Regression: folders 10+ are reachable via arrow navigation + Enter.
+
+    With the old single-digit-instant model, pressing "1" at AWAIT_FOLDER would
+    immediately move the note to folder 1 — and folders 10, 11, 12 were
+    completely unreachable via keyboard.
+
+    With the arrow-highlight + Enter model:
+    - Press "a" → AWAIT_FOLDER, highlight=0 (Folder01).
+    - Press "down" 10 times → highlight=10 (Folder11, 0-based index 10).
+    - Press "enter" → moves note to ("Areas", "Folder11").
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = Note(
+        id="reg-11-1",
+        title="Folder 11 Note",
+        body="<p>areas</p>",
+        preview="areas",
+    )
+    structure = _make_12_areas_structure()
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, [note], structure)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        screen = SortScreen()
+        await app.push_screen(screen)
+        await pilot.pause()
+
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Press "a" → enter AWAIT_FOLDER (highlight defaults to 0 = Folder01)
+        await pilot.press("a")
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        assert sort_screen._router_state == RouterState.AWAIT_FOLDER, (
+            f"Expected AWAIT_FOLDER after 'a', got {sort_screen._router_state}"
+        )
+        assert sort_screen._highlight == 0, (
+            f"Expected highlight=0 on entry, got {sort_screen._highlight}"
+        )
+
+        # Navigate down 10 times to reach index 10 (Folder11, 0-based)
+        for _ in range(10):
+            await pilot.press("down")
+            await pilot.pause()
+
+        assert sort_screen._highlight == 10, (
+            f"Expected highlight=10 after 10 downs, got {sort_screen._highlight}"
+        )
+        # No move yet — arrow keys only move the highlight
+        assert len(mock_inner.moves) == 0, (
+            f"Arrow keys must not move note; got {mock_inner.moves!r}"
+        )
+
+        # Press enter → confirms Folder11 (0-based index 10 → 1-based index 11)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert len(mock_inner.moves) == 1, f"Expected 1 move, got {mock_inner.moves!r}"
+        _moved_id, moved_path = mock_inner.moves[0]
+        assert moved_path == ("Areas", "Folder11"), (
+            f"Expected ('Areas', 'Folder11'), got {moved_path!r}"
+        )
+        summary = sort_screen._session.summary()
+        assert summary.moved == 1, f"Expected session.moved == 1, got {summary.moved}"
+
+
+async def test_digit_alone_does_not_move(tui_config: SorterConfig) -> None:
+    """Regression: pressing a digit at AWAIT_FOLDER only jump-highlights; no move.
+
+    Before the fix, pressing "1" would immediately move the note to folder 1.
+    Now it should only update the highlight and leave the state at AWAIT_FOLDER,
+    requiring an explicit Enter to confirm the selection.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = Note(
+        id="reg-digit-1",
+        title="Digit No-Move Note",
+        body="<p>projects</p>",
+        preview="projects",
+    )
+    structure = _make_projects_structure()
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, [note], structure)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        screen = SortScreen()
+        await app.push_screen(screen)
+        await pilot.pause()
+
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Press "p" → AWAIT_FOLDER
+        await pilot.press("p")
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        assert sort_screen._router_state == RouterState.AWAIT_FOLDER
+
+        # Press "1" → jump-highlight only, no move
+        await pilot.press("1")
+        await pilot.pause()
+
+        assert len(mock_inner.moves) == 0, (
+            f"Digit alone must not move note; got {mock_inner.moves!r}"
+        )
+        assert sort_screen._router_state == RouterState.AWAIT_FOLDER, (
+            f"State must remain AWAIT_FOLDER after digit, got {sort_screen._router_state}"
+        )
+        assert sort_screen._highlight == 0, (
+            f"Highlight should be 0 (index of option '1'), got {sort_screen._highlight}"
+        )
+
+        # Press enter → now moves to folder 1 (General)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert len(mock_inner.moves) == 1, f"Expected 1 move after enter, got {mock_inner.moves!r}"
+        _moved_id, moved_path = mock_inner.moves[0]
+        assert moved_path == ("Projects", "General"), (
+            f"Expected ('Projects', 'General'), got {moved_path!r}"
+        )

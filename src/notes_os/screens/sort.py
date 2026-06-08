@@ -104,12 +104,14 @@ logger = logging.getLogger(__name__)
 
 _HELP_TEXT = """\
 Key legend - Sort Screen
-  P        Projects (select sub-folder by number)
+  P        Projects (navigate folder list)
   A        Areas
   R        Resources
   X        Archive (auto-year)
   S        Skip this note
-  1-9      Select numbered folder/subfolder
+  ↑↓/j/k   Move highlight in folder/subfolder list
+  1-9      Jump-highlight to numbered folder (then Enter to select)
+  Enter    Select highlighted folder/subfolder
   Esc / B  Back one level (or return to Home)
   Q        Quit NotesOS
   ?        Show this help
@@ -189,6 +191,7 @@ class SortScreen(Screen[None]):
         self._prev: RouteResult | None = None
         self._inbox_empty: bool = False
         self._loading: bool = True  # True until _load_inbox_refs worker completes
+        self._highlight: int = 0  # 0-based highlight index for AWAIT_FOLDER/SUBFOLDER
 
     def compose(self) -> ComposeResult:
         """Lay out the sort-screen widgets.
@@ -525,30 +528,57 @@ class SortScreen(Screen[None]):
         if result.state == RouterState.AWAIT_FOLDER:
             self._prev = result
             self._router_state = RouterState.AWAIT_FOLDER
+            self._highlight = 0
             self._render_current_note()
             return
 
         logger.debug("SortScreen: no-op key %r at AWAIT_CATEGORY", key)
 
     def _handle_folder_or_subfolder_key(self, key: str, *, folder: bool) -> None:
-        """Handle a numeric or Esc/B keystroke at AWAIT_FOLDER / AWAIT_SUBFOLDER.
+        """Handle navigation/selection keystrokes at AWAIT_FOLDER / AWAIT_SUBFOLDER.
 
-        Numeric keys 1-9 call ``handle_folder`` or ``handle_subfolder`` with
-        the 1-based index.  Out-of-range indices are no-ops (ROUT-07).
+        Arrow keys (↑↓) and vim-style (j/k) move the highlight.  Digit keys
+        1-9 jump-highlight to that numbered option without selecting.  Enter
+        confirms the highlighted selection by calling ``handle_folder`` or
+        ``handle_subfolder`` with the 1-based index.
+
+        This design lets users reach folders 10 and above via arrow navigation
+        (a single digit would be out-of-range for 10+).  A lone digit key never
+        moves a note — Enter is always required to confirm (ROUT-07).
 
         Args:
-            key: Keystroke string (e.g. ``"1"``, ``"escape"``).
+            key: Keystroke string (e.g. ``"up"``, ``"down"``, ``"1"``,
+                ``"enter"``).
             folder: ``True`` when in AWAIT_FOLDER; ``False`` for AWAIT_SUBFOLDER.
         """
         if self._router is None or self._prev is None:
             return
+        options = self._prev.options
+        if not options:
+            return
 
-        note = self._note_for_move()
-        if note is None:
+        if key in ("up", "k"):
+            self._highlight = max(0, self._highlight - 1)
+            self._render_options_prompt()
+            return
+
+        if key in ("down", "j"):
+            self._highlight = min(len(options) - 1, self._highlight + 1)
+            self._render_options_prompt()
             return
 
         if key.isdigit() and key != "0":
-            index = int(key)
+            d = int(key)
+            if 1 <= d <= len(options):
+                self._highlight = d - 1
+                self._render_options_prompt()
+            return
+
+        if key == "enter":
+            note = self._note_for_move()
+            if note is None:
+                return
+            index = self._highlight + 1
             router, prev = self._router, self._prev  # locals: non-None per the guard above
             if folder:
                 result = self._router_call(note, lambda: router.handle_folder(index, prev, note))
@@ -564,6 +594,7 @@ class SortScreen(Screen[None]):
             if result.state == RouterState.AWAIT_SUBFOLDER:
                 self._prev = result
                 self._router_state = RouterState.AWAIT_SUBFOLDER
+                self._highlight = 0
                 self._render_current_note()
                 return
 
@@ -612,6 +643,9 @@ class SortScreen(Screen[None]):
         back_result = self._router.handle_back(self._router_state, self._prev)
         self._prev = back_result
         self._router_state = back_result.state
+        # Reset highlight when landing on any folder/subfolder list (back nav)
+        if back_result.state in (RouterState.AWAIT_FOLDER, RouterState.AWAIT_SUBFOLDER):
+            self._highlight = 0
         self._render_current_note()
 
     def action_help(self) -> None:
@@ -819,22 +853,30 @@ class SortScreen(Screen[None]):
             self._render_options_prompt()
 
     def _render_options_prompt(self) -> None:
-        """Render the numbered folder/subfolder option list in the prompt widget.
+        """Render the numbered folder/subfolder option list with an arrow highlight.
 
-        Produces a prompt like::
+        Produces a prompt like (markup=False — all literal text)::
 
-            Choose folder (Esc/B back):
-              1. General
-              2. Web
+            Select a folder (↑↓ move · Enter select · Esc back):
+                1. General
+              ▸ 2. Web
+
+        The highlighted row (``self._highlight``) is prefixed with "▸ "; all
+        other rows with two spaces so they align.  The highlight index is
+        clamped defensively to ``[0, len(options)-1]`` before rendering.
 
         Only called when ``_prev`` is not None (i.e. AWAIT_FOLDER/AWAIT_SUBFOLDER).
         """
         if self._prev is None:
             return
         state_label = "folder" if self._router_state == RouterState.AWAIT_FOLDER else "subfolder"
-        lines = [f"Choose {state_label} (Esc/B back):"]
-        for i, name in enumerate(self._prev.options, start=1):
-            lines.append(f"  {i}. {name}")
+        options = self._prev.options
+        if options:
+            self._highlight = max(0, min(self._highlight, len(options) - 1))
+        lines = [f"Select a {state_label} (↑↓ move · Enter select · Esc back):"]
+        for i, name in enumerate(options, start=1):
+            prefix = "▸ " if (i - 1) == self._highlight else "  "
+            lines.append(f"  {prefix}{i}. {name}")
         self.query_one("#prompt", Static).update("\n".join(lines))
 
     def _render_empty_inbox(self) -> None:
