@@ -326,3 +326,56 @@ class TestRealEnsureFolder:
             )
         finally:
             _delete_folder(_TEST_TARGET)
+
+
+# ---------------------------------------------------------------------------
+# TUI smoke test — production wiring against real Notes (deselected in CI)
+# ---------------------------------------------------------------------------
+
+
+class TestTUIProductionWiring:
+    """Integration smoke: verify NotesOSApp production DI wiring without UI interaction.
+
+    This test verifies that the production wiring path — ``NotesOSApp()`` with
+    no injected dependencies — correctly builds a
+    :class:`~notes_os.backup.BackingUpNotesRepository` wrapping an
+    :class:`~notes_os.sorter.notes.AppleScriptNotesRepository`.  It exercises
+    the deferred-import DI seam from Phase 06-01 without launching a full
+    interactive Textual session (which requires a real terminal).
+
+    macOS-only; requires Apple Notes and osascript.  Deselected from CI by the
+    module-level ``pytestmark = pytest.mark.integration`` so the default run
+    (``pytest -m 'not integration'``) never executes this test and never touches
+    user data.
+    """
+
+    def test_production_app_builds_correct_repo_types(self) -> None:
+        """NotesOSApp() DI seam builds BackingUpNotesRepository over AppleScriptNotesRepository.
+
+        Constructs a production ``NotesOSApp()`` with no injected dependencies
+        and asserts that the repo and backup_manager attributes have the correct
+        production types.  No Textual event loop is started; no notes are read
+        or written; no UI is shown.
+
+        This is the minimal macOS-only smoke to prove the production wiring is
+        intact after Phase-6 TUI integration (SC5 production-path check).
+        """
+        from notes_os.app import NotesOSApp
+        from notes_os.backup import BackingUpNotesRepository, BackupManager
+        from notes_os.sorter.notes import AppleScriptNotesRepository
+
+        app = NotesOSApp()
+
+        assert isinstance(app.backup_manager, BackupManager), (
+            f"Expected BackupManager, got {type(app.backup_manager).__name__}"
+        )
+
+        assert isinstance(app.repo, BackingUpNotesRepository), (
+            f"Expected BackingUpNotesRepository, got {type(app.repo).__name__}"
+        )
+
+        # Verify the inner (unwrapped) repo is the AppleScript implementation
+        inner = app.repo._inner  # type: ignore[attr-defined]  # BackingUpNotesRepository._inner
+        assert isinstance(inner, AppleScriptNotesRepository), (
+            f"Expected AppleScriptNotesRepository as inner repo, got {type(inner).__name__}"
+        )
