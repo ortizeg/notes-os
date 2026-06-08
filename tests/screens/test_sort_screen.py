@@ -40,6 +40,7 @@ from textual.widgets import Static
 from notes_os.app import NotesOSApp
 from notes_os.backup import BackingUpNotesRepository, BackupManager
 from notes_os.backup_models import Backup
+from notes_os.exceptions import BackupError
 from notes_os.screens.sort import SortScreen
 from notes_os.sorter.models import Note, ParaStructure
 from notes_os.sorter.router import RouterState
@@ -318,6 +319,48 @@ async def test_category_prompt_renders_bracket_shortcuts_literally(
         assert "[P]rojects" in prompt_text, prompt_text
         assert "[A]reas" in prompt_text, prompt_text
         assert "[S]kip" in prompt_text, prompt_text
+
+
+async def test_archive_move_backup_failure_does_not_crash(
+    tui_config: SorterConfig,
+) -> None:
+    """Regression: a backup failure on the [X] archive path must not crash the TUI.
+
+    The archive move happens INSIDE router.handle_category → ensure_folder →
+    backup.create(). When the backup raises (e.g. Full Disk Access not granted →
+    PermissionError → BackupError), the screen must record the error and keep the
+    (un-moved) note in view at AWAIT_CATEGORY — never propagate and crash the app
+    (BRDG-06 resilience + BKUP-06 abort-on-failed-backup).
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = Note(id="err-1", title="Note", body="<p>b</p>", preview="b")
+    structure = _make_projects_structure()
+    app, mock_inner, spy = _make_app_with_spy(tui_config, [note], structure)
+    spy.create.side_effect = BackupError(
+        "backup failed: [Errno 1] Operation not permitted: NoteStore.sqlite"
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("x")  # archive → ensure_folder → backup.create() raises
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        assert isinstance(sort_screen, SortScreen), "TUI crashed off SortScreen"
+        assert mock_inner.moves == [], f"note must NOT move on backup failure: {mock_inner.moves!r}"
+        summary = sort_screen._session.summary()
+        assert summary.errors == 1, f"expected 1 recorded error, got {summary!r}"
+        assert summary.moved == 0
+        assert sort_screen._router_state == RouterState.AWAIT_CATEGORY
+        prompt_text = str(sort_screen.query_one("#prompt", Static).render())
+        assert "Could not move" in prompt_text, prompt_text
 
 
 # ---------------------------------------------------------------------------

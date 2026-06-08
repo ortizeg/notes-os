@@ -443,6 +443,46 @@ class SortScreen(Screen[None]):
         elif self._router_state == RouterState.AWAIT_SUBFOLDER:
             self._handle_folder_or_subfolder_key(key, folder=False)
 
+    def _router_call(self, note: Note, call: Callable[[], RouteResult]) -> RouteResult | None:
+        """Run a router transition that may perform a move, isolating failures.
+
+        The archive (``[X]``) path and immediate folder/subfolder selections
+        perform the move INSIDE the router (``ensure_folder`` / ``move_note`` /
+        the pre-write backup), so a backup or AppleScript failure raises here —
+        not in :meth:`_handle_move`.  Per BRDG-06 / BKUP-06, a failed write is a
+        warning the session survives, never a crash: record the error, surface
+        it, and keep the (un-moved) note in view at AWAIT_CATEGORY so the user
+        can retry, skip, or quit.
+
+        Args:
+            note: The note the failed transition was acting on.
+            call: A zero-arg callable invoking the router transition.
+
+        Returns:
+            The ``RouteResult`` on success, or ``None`` when a
+            :class:`~notes_os.exceptions.NotesOSError` was caught and handled.
+        """
+        try:
+            return call()
+        except NotesOSError as exc:
+            logger.warning("SortScreen: move failed for note %r: %s", note.id, exc)
+            self._session.record_error(note.id, str(exc))
+            self.app.sort_in_progress = True  # type: ignore[attr-defined]
+            self._router_state = RouterState.AWAIT_CATEGORY
+            self._prev = None
+            self._show_move_error(str(exc))
+            return None
+
+    def _show_move_error(self, message: str) -> None:
+        """Render a move/backup failure in the prompt and keep the note in view.
+
+        Args:
+            message: The error text from the caught exception.
+        """
+        self.query_one("#prompt", Static).update(
+            f"⚠ Could not move this note — it stays in your inbox:\n{message}\n\n{_CATEGORY_PROMPT}"
+        )
+
     def _handle_category_key(self, key: str) -> None:
         """Handle a keystroke at AWAIT_CATEGORY state.
 
@@ -462,7 +502,9 @@ class SortScreen(Screen[None]):
         if note is None:
             return
 
-        result = self._router.handle_category(key, note)
+        result = self._router_call(note, lambda: self._router.handle_category(key, note))  # type: ignore[union-attr]
+        if result is None:
+            return
 
         if result.help_requested:
             self._show_help()
@@ -507,10 +549,13 @@ class SortScreen(Screen[None]):
 
         if key.isdigit() and key != "0":
             index = int(key)
+            router, prev = self._router, self._prev  # locals: non-None per the guard above
             if folder:
-                result = self._router.handle_folder(index, self._prev, note)
+                result = self._router_call(note, lambda: router.handle_folder(index, prev, note))
             else:
-                result = self._router.handle_subfolder(index, self._prev, note)
+                result = self._router_call(note, lambda: router.handle_subfolder(index, prev, note))
+            if result is None:
+                return
 
             if result.action == RouteAction.MOVE and result.folder_path is not None:
                 self._handle_move(note, result)
