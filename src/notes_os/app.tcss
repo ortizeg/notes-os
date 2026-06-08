@@ -50,3 +50,41 @@ Screen {
 #status-backend {
     color: $text-muted;
 }
+
+/* SortScreen widgets */
+
+#note-title {
+    content-align: center middle;
+    text-align: center;
+    width: 100%;
+    padding: 1 2;
+    color: $accent;
+    text-style: bold;
+}
+
+#note-preview {
+    width: 80%;
+    height: auto;
+    max-height: 10;
+    border: solid $panel;
+    padding: 0 1;
+    margin: 0 auto 1 auto;
+    color: $text;
+}
+
+#prompt {
+    width: 80%;
+    height: auto;
+    border: solid $accent;
+    padding: 0 1;
+    margin: 0 auto 1 auto;
+    color: $text;
+}
+
+#progress {
+    content-align: center middle;
+    text-align: center;
+    width: 100%;
+    color: $text-muted;
+    padding-bottom: 1;
+}
