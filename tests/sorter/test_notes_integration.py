@@ -154,20 +154,33 @@ end tell"""
     return _run_script(script)
 
 
-def _get_note_folder(note_id: str) -> str:
-    """Return the name of the folder containing the note with *note_id*.
+def _find_note_id_by_title(folder_name: str, title: str) -> str:
+    """Return the current id of the note named *title* in *folder_name*, or "".
+
+    Apple Notes reassigns a note's ``id`` when it is moved between folders, so a
+    note cannot be re-located by its pre-move id (``name of container of note
+    id …`` fails with error ``-1728`` after a move).  This locates the note by
+    its stable display name instead, returning its *current* id.
 
     Args:
-        note_id: The opaque Apple Notes note identifier.
+        folder_name: The top-level Notes folder to search.
+        title: The exact note display name to match.
 
     Returns:
-        The folder name containing the note.
+        The note's current opaque id, or an empty string if no note with that
+        title exists in the folder.
     """
-    escaped_id = note_id.replace('"', '""')
+    escaped_folder = folder_name.replace('"', '""')
+    escaped_title = title.replace('"', '""')
     script = f"""\
 tell application "Notes"
-    set theNote to note id "{escaped_id}"
-    return name of container of theNote
+    set theFolder to folder "{escaped_folder}"
+    repeat with aNote in (notes of theFolder)
+        if (name of aNote) is "{escaped_title}" then
+            return id of aNote
+        end if
+    end repeat
+    return ""
 end tell"""
     return _run_script(script)
 
@@ -276,8 +289,14 @@ class TestRealMove:
         bridge_repo: AppleScriptNotesRepository,
         test_inbox_with_note: tuple[str, str],
     ) -> None:
-        """move_note moves the test note from _TestInbox to _TestTarget; round-trip moves it back."""
-        note_id, _note_title = test_inbox_with_note
+        """move_note moves the test note from _TestInbox to _TestTarget; round-trip moves it back.
+
+        Apple Notes reassigns a note's id on every cross-folder move, so the
+        note is re-located by its (stable) title after each move rather than by
+        its now-stale id — and the round-trip move uses the *new* id returned by
+        :func:`_find_note_id_by_title`, not the original.
+        """
+        note_id, note_title = test_inbox_with_note
 
         # Create _TestTarget folder
         _ensure_folder_raw(_TEST_TARGET)
@@ -285,18 +304,22 @@ class TestRealMove:
         # Move from _TestInbox to _TestTarget
         bridge_repo.move_note(note_id, (_TEST_TARGET,))
 
-        folder_after_move = _get_note_folder(note_id)
-        assert folder_after_move == _TEST_TARGET, (
-            f"Note should be in {_TEST_TARGET!r}, got {folder_after_move!r}"
+        # The note now lives in _TestTarget under a NEW id (Notes reassigns it).
+        moved_id = _find_note_id_by_title(_TEST_TARGET, note_title)
+        assert moved_id != "", f"Note {note_title!r} should be in {_TEST_TARGET!r} after move"
+        assert _find_note_id_by_title(_TEST_INBOX, note_title) == "", (
+            f"Note {note_title!r} should have left {_TEST_INBOX!r}"
         )
 
-        # Round-trip: move back to _TestInbox using default repo (inbox_folder is config-only)
+        # Round-trip: move back to _TestInbox using the new id (inbox_folder is config-only).
         default_repo = AppleScriptNotesRepository(BridgeConfig())
-        default_repo.move_note(note_id, (_TEST_INBOX,))
+        default_repo.move_note(moved_id, (_TEST_INBOX,))
 
-        folder_after_round_trip = _get_note_folder(note_id)
-        assert folder_after_round_trip == _TEST_INBOX, (
-            f"Note should be back in {_TEST_INBOX!r}, got {folder_after_round_trip!r}"
+        assert _find_note_id_by_title(_TEST_INBOX, note_title) != "", (
+            f"Note {note_title!r} should be back in {_TEST_INBOX!r} after round-trip"
+        )
+        assert _find_note_id_by_title(_TEST_TARGET, note_title) == "", (
+            f"Note {note_title!r} should have left {_TEST_TARGET!r} after round-trip"
         )
 
 
