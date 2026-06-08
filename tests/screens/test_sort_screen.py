@@ -35,6 +35,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+from textual.events import Key
 from textual.widgets import Static
 
 from notes_os.app import NotesOSApp
@@ -634,6 +635,49 @@ async def test_folder_11_reachable_via_arrows(tui_config: SorterConfig) -> None:
         )
         summary = sort_screen._session.summary()
         assert summary.moved == 1, f"Expected session.moved == 1, got {summary.moved}"
+
+
+async def test_enter_with_carriage_return_character_selects(
+    tui_config: SorterConfig,
+) -> None:
+    """Regression: Enter from a REAL terminal arrives as character='\\r', not 'enter'.
+
+    ``on_key`` collapses ``event.character or event.key``; the Enter key sends a
+    truthy carriage-return character that would shadow ``event.key='enter'`` and
+    silently no-op the selection (Pilot's ``press('enter')`` sends character=None,
+    so it masked the bug). on_key now normalizes named keys off event.key. This
+    test dispatches a Key with character='\\r' to reproduce the real terminal.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = Note(id="cr-1", title="Note", body="<p>b</p>", preview="b")
+    structure = _make_12_areas_structure()
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, [note], structure)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("a")  # → AWAIT_FOLDER, highlight 0
+        await pilot.pause()
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        for _ in range(10):
+            await pilot.press("down")
+            await pilot.pause()
+        assert sort_screen._highlight == 10
+
+        # Real-terminal Enter: key="enter" but character="\r" (carriage return).
+        sort_screen.on_key(Key(key="enter", character="\r"))
+        await pilot.pause()
+
+        assert len(mock_inner.moves) == 1, (
+            f"carriage-return Enter must select; got {mock_inner.moves!r}"
+        )
+        assert mock_inner.moves[0][1] == ("Areas", "Folder11")
 
 
 async def test_digit_alone_does_not_move(tui_config: SorterConfig) -> None:

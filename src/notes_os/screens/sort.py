@@ -438,6 +438,12 @@ class SortScreen(Screen[None]):
             return
 
         key = event.character or event.key
+        # In a real terminal the Enter key arrives with character="\r" (a truthy
+        # carriage return) which would shadow event.key="enter" above and break
+        # folder selection. Normalize named navigation keys off event.key so the
+        # handlers see "enter"/"up"/"down" regardless of the control character.
+        if event.key in ("enter", "up", "down"):
+            key = event.key
 
         if self._router_state == RouterState.AWAIT_CATEGORY:
             self._handle_category_key(key)
