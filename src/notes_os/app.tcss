@@ -1,0 +1,150 @@
+/* NotesOS — application-level Textual CSS
+   Minimal styles for the HomeScreen layout.  Screen-specific styles may be
+   added inline in the screen's DEFAULT_CSS or extended here.
+*/
+
+Screen {
+    align: center middle;
+}
+
+#splash {
+    content-align: center middle;
+    text-align: center;
+    width: 100%;
+    padding: 1 2;
+    color: $accent;
+}
+
+#version-label {
+    content-align: center middle;
+    text-align: center;
+    width: 100%;
+    color: $text-muted;
+    padding-bottom: 1;
+}
+
+#menu {
+    width: 40;
+    height: auto;
+    border: solid $accent;
+    padding: 0 1;
+    margin: 1 0;
+}
+
+#status {
+    width: 60;
+    height: auto;
+    border: solid $panel;
+    padding: 0 1;
+    margin: 1 0;
+}
+
+#status-inbox {
+    color: $text;
+}
+
+#status-backup {
+    color: $text;
+}
+
+#status-backend {
+    color: $text-muted;
+}
+
+/* SortScreen widgets */
+
+#note-title {
+    content-align: center middle;
+    text-align: center;
+    width: 100%;
+    padding: 1 2;
+    color: $accent;
+    text-style: bold;
+}
+
+#note-preview {
+    width: 80%;
+    height: auto;
+    max-height: 10;
+    border: solid $panel;
+    padding: 0 1;
+    margin: 0 1;
+    color: $text;
+}
+
+#prompt {
+    width: 80%;
+    height: auto;
+    border: solid $accent;
+    padding: 0 1;
+    margin: 0 1;
+    color: $text;
+}
+
+#progress {
+    content-align: center middle;
+    text-align: center;
+    width: 100%;
+    color: $text-muted;
+    padding-bottom: 1;
+}
+
+/* ConfirmQuitModal */
+
+ConfirmQuitModal {
+    align: center middle;
+}
+
+#confirm-quit-label {
+    width: 50;
+    height: auto;
+    border: solid $warning;
+    padding: 1 2;
+    margin: 0 1 1 1;
+    color: $text;
+    text-align: center;
+    content-align: center middle;
+}
+
+#confirm-quit-yes {
+    width: 20;
+    margin: 0 1;
+}
+
+#confirm-quit-no {
+    width: 20;
+    margin: 0 1;
+}
+
+/* TaskExtractScreen modal */
+
+TaskExtractScreen {
+    align: center middle;
+}
+
+#task-header {
+    width: 80%;
+    height: auto;
+    border: solid $accent;
+    padding: 0 1;
+    margin: 0 1;
+    color: $text;
+}
+
+#task-list {
+    width: 80%;
+    height: auto;
+    max-height: 15;
+    border: solid $panel;
+    padding: 0 1;
+    margin: 0 1;
+}
+
+#task-legend {
+    width: 80%;
+    height: auto;
+    border: solid $panel;
+    padding: 0 1;
+    margin: 0 1;
+    color: $text-muted;
+}

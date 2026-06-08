@@ -203,6 +203,30 @@ def test_create_copies_three_files(tmp_path: Path) -> None:
     datetime.datetime.strptime(ts_str, "%Y-%m-%d_%H-%M-%S")
 
 
+def test_create_twice_same_second_reuses_dir_no_enotempty(tmp_path: Path) -> None:
+    """Regression: two backups in the same second reuse the dir, never ENOTEMPTY.
+
+    A single archive move fires two backups microseconds apart (ensure_folder then
+    move_note). With second-precision dir names they collide; the second create()
+    previously raised ``BackupError: [Errno 66] Directory not empty`` on the
+    staging->dest rename. create() is now idempotent within a second: the second
+    call reuses the existing backup dir.
+    """
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = make_config(tmp_path, notes_db_dir=db_dir)
+    mgr = BackupManager(cfg)
+    fixed = datetime.datetime(2026, 6, 8, 12, 8, 33)
+
+    first = mgr.create(now=fixed)
+    second = mgr.create(now=fixed)  # same second — must not raise ENOTEMPTY
+
+    assert first.path == second.path, "second backup should reuse the first dir"
+    assert first.path.exists()
+    assert (first.path / NOTE_STORE_DB).exists()
+    # Exactly one backup directory exists for that second.
+    assert len(mgr.list()) == 1, [b.path.name for b in mgr.list()]
+
+
 # ---------------------------------------------------------------------------
 # Test 2: create with label
 # ---------------------------------------------------------------------------
@@ -417,6 +441,57 @@ def test_decorator_read_methods_no_backup(tmp_path: Path) -> None:
     _ = repo.get_para_structure()
 
     assert spy.create_calls == [], "read methods must not trigger backup"
+
+
+# ---------------------------------------------------------------------------
+# Test: new lazy-loading read passthroughs trigger zero create() calls
+# ---------------------------------------------------------------------------
+
+
+def test_decorator_get_inbox_note_refs_no_backup(tmp_path: Path) -> None:
+    """get_inbox_note_refs() passes through to inner with no backup.create() call."""
+    from notes_os.sorter.models import NoteRef
+
+    cfg = make_config(tmp_path)
+    inner = make_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    refs = repo.get_inbox_note_refs()
+
+    assert spy.create_calls == [], "get_inbox_note_refs must not trigger backup"
+    assert isinstance(refs, list), "should return a list"
+    # MockNotesRepository seeded with one note (n1)
+    assert len(refs) == 1
+    assert isinstance(refs[0], NoteRef)
+    assert refs[0].id == "n1"
+
+
+def test_decorator_get_note_no_backup(tmp_path: Path) -> None:
+    """get_note() passes through to inner with no backup.create() call."""
+    cfg = make_config(tmp_path)
+    inner = make_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    note = repo.get_note("n1")
+
+    assert spy.create_calls == [], "get_note must not trigger backup"
+    assert note.id == "n1"
+    assert note.title == "T"
+
+
+def test_decorator_count_inbox_notes_no_backup(tmp_path: Path) -> None:
+    """count_inbox_notes() passes through to inner with no backup.create() call."""
+    cfg = make_config(tmp_path)
+    inner = make_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    count = repo.count_inbox_notes()
+
+    assert spy.create_calls == [], "count_inbox_notes must not trigger backup"
+    assert count == 1  # one seeded note
 
 
 # ---------------------------------------------------------------------------

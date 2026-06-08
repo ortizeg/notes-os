@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Backup** — Auto-backup-before-write, create/list/restore/prune, BackupError (completed 2026-06-07)
 - [x] **Phase 4: Sorting Core** — Config (Pydantic V2), PARA router state machine, terminal UI primitives, session tracking (completed 2026-06-07)
 - [x] **Phase 5: Task Extraction** — Heuristic action-item scanner, user selection, Markdown output, off by default (completed 2026-06-07)
-- [ ] **Phase 6: Textual TUI Integration** — Full Textual app wired end-to-end via `notes` entry point
+- [x] **Phase 6: Textual TUI Integration** — Full Textual app wired end-to-end via `notes` entry point (completed 2026-06-08)
 
 ## Phase Details
 
@@ -150,14 +150,14 @@ Plans:
   4. `Esc`/`B` backs up one screen level, `Q` quits from any screen, `?` shows contextual help — navigation is consistent across all screens
   5. CI test suite (Textual Pilot + mocks) passes on macOS-latest × Python 3.11 and 3.12 with overall ≥80% coverage gate green
 
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
 
-- [ ] 06-01: `app.py` + `screens/home.py` — Textual app shell, HomeScreen splash, menu, live status indicators
-- [ ] 06-02: `screens/sort.py` + widget plumbing — SortScreen wrapping router/UI/backup flow
-- [ ] 06-03: `screens/task_extract.py` — TaskExtractScreen wrapping extractor/UI, navigation integration
-- [ ] 06-04: End-to-end wiring + test suite — Textual Pilot tests, 80% overall coverage gate, CI green
+- [x] 06-01-PLAN.md — Textual app shell (NotesOSApp DI seam) + HomeScreen splash/menu/live status + async-test (pytest-asyncio) setup + nav base
+- [x] 06-02-PLAN.md — SortScreen drives the UI-agnostic Router directly (event-driven, not the blocking controller) + Home→Sort wiring + SC2 Pilot test
+- [x] 06-03-PLAN.md — TaskExtractScreen (add-all/select/skip → TaskWriter) wired into SortScreen `_after_move`, gated on task_extraction + SC3 Pilot test
+- [x] 06-04-PLAN.md — Harmonized TUI-05 nav (quit-confirm, contextual help) + comprehensive Pilot suite (SC4 + end-to-end) + optional integration smoke + ≥80% gate
 
 ---
 
@@ -173,4 +173,4 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Backup | 2/2 | Complete | 2026-06-07 |
 | 4. Sorting Core | 5/5 | Complete   | 2026-06-07 |
 | 5. Task Extraction | 2/2 | Complete   | 2026-06-07 |
-| 6. Textual TUI Integration | 0/4 | Not started | - |
+| 6. Textual TUI Integration | 4/4 | Complete   | 2026-06-08 |

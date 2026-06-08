@@ -9,6 +9,8 @@ All subprocess.run calls are patched — no osascript process ever spawns.
 
 from __future__ import annotations
 
+import contextlib
+import subprocess
 import types
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -16,7 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from notes_os.exceptions import FolderNotFoundError, NotesError, NotesMoveError, NotesOSError
-from notes_os.sorter.models import BridgeConfig, Note, ParaStructure
+from notes_os.sorter.models import BridgeConfig, Note, NoteRef, ParaStructure
 from notes_os.sorter.notes import (
     _FIELD_SEP,
     _RECORD_SEP,
@@ -262,6 +264,18 @@ class TestGetInboxNotes:
                 ),
             ),
             pytest.raises(NotesError, match="Not authorized"),
+        ):
+            repo.get_inbox_notes()
+
+    def test_osascript_timeout_raises_notes_error(self) -> None:
+        """A hung osascript (TimeoutExpired) is surfaced as NotesError, not a hang."""
+        repo = _default_repo()
+        with (
+            patch(
+                "notes_os.sorter.notes.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["osascript"], timeout=30.0),
+            ),
+            pytest.raises(NotesError, match="timed out"),
         ):
             repo.get_inbox_notes()
 
@@ -769,3 +783,271 @@ class TestFailingStubResilience:
                 caught_type = type(exc)
 
         assert caught_type is FolderNotFoundError
+
+
+# ---------------------------------------------------------------------------
+# get_inbox_note_refs — subprocess mocked
+# ---------------------------------------------------------------------------
+
+
+def _ref_stdout(records: list[tuple[str, str]]) -> str:
+    """Build fake get_inbox_note_refs osascript stdout from (id, title) tuples.
+
+    Args:
+        records: List of (note_id, title) tuples.
+
+    Returns:
+        A fake stdout string in the format get_inbox_note_refs expects.
+    """
+    return _RECORD_SEP.join(f"{note_id}{_FIELD_SEP}{title}" for note_id, title in records)
+
+
+class TestGetInboxNoteRefs:
+    """Tests for AppleScriptNotesRepository.get_inbox_note_refs."""
+
+    def test_well_formed_two_refs(self) -> None:
+        """Well-formed stdout with two records parses into two NoteRef objects."""
+        repo = _default_repo()
+        stdout = _ref_stdout([("id1", "First Note"), ("id2", "Second Note")])
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            refs = repo.get_inbox_note_refs()
+
+        assert len(refs) == 2
+        assert refs[0].id == "id1"
+        assert refs[0].title == "First Note"
+        assert refs[1].id == "id2"
+        assert refs[1].title == "Second Note"
+
+    def test_well_formed_single_ref(self) -> None:
+        """Single-record stdout parses into one NoteRef."""
+        repo = _default_repo()
+        stdout = _ref_stdout([("id-only", "Solo Note")])
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            refs = repo.get_inbox_note_refs()
+
+        assert len(refs) == 1
+        assert refs[0].id == "id-only"
+        assert refs[0].title == "Solo Note"
+
+    def test_empty_stdout_returns_empty_list(self) -> None:
+        """Empty stdout returns an empty list."""
+        repo = _default_repo()
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=""),
+        ):
+            refs = repo.get_inbox_note_refs()
+
+        assert refs == []
+
+    def test_whitespace_stdout_returns_empty_list(self) -> None:
+        """Whitespace-only stdout returns an empty list."""
+        repo = _default_repo()
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout="   \n  "),
+        ):
+            refs = repo.get_inbox_note_refs()
+
+        assert refs == []
+
+    def test_trailing_record_sep_skipped(self) -> None:
+        """Trailing _RECORD_SEP creates an empty trailing record that is skipped."""
+        repo = _default_repo()
+        stdout = _ref_stdout([("id1", "Note A")]) + _RECORD_SEP  # trailing sep
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            refs = repo.get_inbox_note_refs()
+
+        assert len(refs) == 1
+        assert refs[0].id == "id1"
+
+    def test_malformed_record_missing_field_sep_is_skipped(self) -> None:
+        """A record with no field separator is skipped; valid records still parsed."""
+        repo = _default_repo()
+        malformed = "just-an-id-no-sep"
+        good = _ref_stdout([("good-id", "Good Title")])
+        stdout = f"{malformed}{_RECORD_SEP}{good}"
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            refs = repo.get_inbox_note_refs()
+
+        assert len(refs) == 1
+        assert refs[0].id == "good-id"
+
+    def test_returns_note_ref_instances(self) -> None:
+        """Returned objects are NoteRef instances (frozen BaseModel)."""
+        repo = _default_repo()
+        stdout = _ref_stdout([("x1", "Title X")])
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            refs = repo.get_inbox_note_refs()
+
+        assert len(refs) == 1
+        assert isinstance(refs[0], NoteRef)
+
+    def test_non_zero_returncode_raises_notes_error(self) -> None:
+        """Non-zero returncode raises NotesError."""
+        repo = _default_repo()
+        with (
+            patch(
+                "notes_os.sorter.notes.subprocess.run",
+                return_value=_make_run_result(returncode=1, stderr="permission denied"),
+            ),
+            pytest.raises(NotesError),
+        ):
+            repo.get_inbox_note_refs()
+
+
+# ---------------------------------------------------------------------------
+# get_note — subprocess mocked
+# ---------------------------------------------------------------------------
+
+
+class TestGetNote:
+    """Tests for AppleScriptNotesRepository.get_note."""
+
+    def test_well_formed_returns_note_with_preview(self) -> None:
+        """Well-formed osascript output builds a Note with a stripped preview."""
+        repo = _default_repo()
+        note_id = "x-coredata://test/id1"
+        body = "<div>Buy <b>milk</b> &amp; eggs</div>"
+        stdout = f"{note_id}{_FIELD_SEP}Shopping List{_FIELD_SEP}{body}"
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            note = repo.get_note(note_id)
+
+        assert note.id == note_id
+        assert note.title == "Shopping List"
+        assert note.body == body
+        assert note.preview == "Buy milk & eggs"
+
+    def test_note_not_found_non_zero_raises_notes_move_error(self) -> None:
+        """Non-zero osascript exit (note not found) raises NotesMoveError."""
+        repo = _default_repo()
+        with (
+            patch(
+                "notes_os.sorter.notes.subprocess.run",
+                return_value=_make_run_result(
+                    returncode=1,
+                    stderr='Can\'t get note id "bad-id".',
+                ),
+            ),
+            pytest.raises(NotesMoveError),
+        ):
+            repo.get_note("bad-id")
+
+    def test_note_id_with_double_quote_is_escaped(self) -> None:
+        """Double quotes in note_id are escaped in the AppleScript."""
+        repo = _default_repo()
+        note_id = 'x-coredata://has"quote'
+        body = "<p>body</p>"
+        stdout = f"{note_id}{_FIELD_SEP}Title{_FIELD_SEP}{body}"
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ) as mock_run:
+            # This will raise because the stdout id doesn't match escaped format,
+            # but we can verify the script used double-escaped quotes.
+            with contextlib.suppress(Exception):
+                repo.get_note(note_id)
+            script = mock_run.call_args[0][0][2]
+            assert '""' in script  # double-quote escaped
+
+    def test_malformed_stdout_missing_body_field_raises_notes_move_error(self) -> None:
+        """Stdout with fewer than 3 fields raises NotesMoveError (malformed response)."""
+        repo = _default_repo()
+        # Only two fields: id + title, no body separator
+        stdout = f"some-id{_FIELD_SEP}Title Only"
+        with (
+            patch(
+                "notes_os.sorter.notes.subprocess.run",
+                return_value=_make_run_result(stdout=stdout),
+            ),
+            pytest.raises(NotesMoveError),
+        ):
+            repo.get_note("some-id")
+
+    def test_preview_truncated_to_config_length(self) -> None:
+        """Preview is truncated to BridgeConfig.preview_length."""
+        cfg = BridgeConfig(preview_length=50)
+        repo = AppleScriptNotesRepository(cfg)
+        body = "A" * 200
+        note_id = "id-trunc"
+        stdout = f"{note_id}{_FIELD_SEP}Long Note{_FIELD_SEP}{body}"
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            note = repo.get_note(note_id)
+
+        assert len(note.preview) == 50
+
+
+# ---------------------------------------------------------------------------
+# count_inbox_notes — subprocess mocked
+# ---------------------------------------------------------------------------
+
+
+class TestCountInboxNotes:
+    """Tests for AppleScriptNotesRepository.count_inbox_notes."""
+
+    def test_returns_count_from_stdout(self) -> None:
+        """Numeric stdout returns the correct integer count."""
+        repo = _default_repo()
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout="42\n"),
+        ):
+            count = repo.count_inbox_notes()
+
+        assert count == 42
+
+    def test_empty_stdout_returns_zero(self) -> None:
+        """Empty stdout returns 0 (empty inbox)."""
+        repo = _default_repo()
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=""),
+        ):
+            count = repo.count_inbox_notes()
+
+        assert count == 0
+
+    def test_non_numeric_stdout_raises_notes_error(self) -> None:
+        """Non-numeric stdout (unexpected) raises NotesError."""
+        repo = _default_repo()
+        with (
+            patch(
+                "notes_os.sorter.notes.subprocess.run",
+                return_value=_make_run_result(stdout="not-a-number"),
+            ),
+            pytest.raises(NotesError, match="expected integer"),
+        ):
+            repo.count_inbox_notes()
+
+    def test_non_zero_returncode_raises_notes_error(self) -> None:
+        """Non-zero returncode raises NotesError."""
+        repo = _default_repo()
+        with (
+            patch(
+                "notes_os.sorter.notes.subprocess.run",
+                return_value=_make_run_result(returncode=1, stderr="error"),
+            ),
+            pytest.raises(NotesError),
+        ):
+            repo.count_inbox_notes()

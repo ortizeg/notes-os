@@ -4,7 +4,9 @@
 
 NotesOS is a local-first, AI-augmented CLI/TUI for managing, distilling, and connecting knowledge in Apple Notes using Tiago Forte's PARA methodology and CODE framework (Capture → Organize → Distill → Express). It is keyboard-driven, runs entirely on the user's Mac, and keeps the human in the loop for every decision. Built as a monorepo (`notes-os/`) from day one, it grows across four milestones without restructuring.
 
-**This project's active milestone is M1 — the PARA Notes Sorter** (the Organize step). M2–M4 are captured in the vision below and will be planned as subsequent milestones.
+**Milestone 1 — the PARA Notes Sorter (Organize) — is COMPLETE** (shipped via PRs #1–#6, validated against real Apple Notes on 2026-06-08). M2–M4 are captured in the vision below; next up is M2 (Distillation Engine).
+
+> **Runtime prerequisites (macOS, discovered during UAT):** the terminal needs **two** TCC grants — *Automation → Notes* (AppleScript control) AND *Full Disk Access* (to back up `NoteStore.sqlite` before writes). Both are required for the sort flow; without Full Disk Access every move aborts on a backup `PermissionError` by design.
 
 ## Core Value
 
@@ -14,21 +16,22 @@ A person can triage their Apple Notes inbox into a PARA-structured folder hierar
 
 ### Validated
 
-(None yet — ship to validate)
+<!-- M1 — PARA Notes Sorter. Shipped (PRs #1–#6) and validated end-to-end against
+     real Apple Notes on 2026-06-08. 44 v1 requirements, ~356 tests, ~92% coverage. -->
+
+- ✓ Repo scaffold: monorepo, pixi env, pyproject (Hatchling + hatch-vcs), `notes` TUI entry point, M2–M4 stubs, CI, pre-commit — M1/SCAF
+- ✓ AppleScript bridge (`notes.py`): inbox read, PARA discovery, move, ensure_folder, lazy `get_note`/`get_inbox_note_refs`, behind `NotesRepositoryProtocol` — M1/BRDG
+- ✓ Notes DB backup (`backup.py`): auto-backup-before-write, list/restore/prune, 10-backup retention; idempotent-per-second `create()` — M1/BKUP
+- ✓ Pydantic V2 config (`config.py`): frozen `SorterConfig` composing Bridge/Backup, TOML loader, clear errors — M1/CONF
+- ✓ PARA routing state machine (`router.py`): UI-agnostic, archive auto-year, `[B]` back — M1/ROUT
+- ✓ Terminal UI + Textual screens: note preview, arrow-highlight + Enter folder selection, `?` help, inbox count — M1/UI, TUI
+- ✓ Session tracking (`session.py`): moved/skipped/error counts, summary, log to `~/.notes-os/logs/` — M1/SESS
+- ✓ Heuristic task extraction (`extractor.py`): off by default, Markdown checkboxes to `~/.notes-os/extracted-tasks/` — M1/TASK
+- ✓ Textual TUI app: HomeScreen + SortScreen + TaskExtractScreen wired end-to-end via `notes` — M1/TUI
 
 ### Active
 
-<!-- M1 scope: PARA Notes Sorter. These are hypotheses until shipped. -->
-
-- [ ] Repo scaffold: monorepo, pixi env, pyproject (Hatchling + hatch-vcs), `notes` TUI entry point, stub modules for M2–M4, CI workflows, pre-commit
-- [ ] AppleScript bridge (`notes.py`): read inbox notes, discover PARA structure, move note, ensure folder — behind `NotesRepositoryProtocol`
-- [ ] Notes database backup (`backup.py`): auto-backup before every write, list/restore/prune, 10-backup retention — built immediately after the bridge is validated
-- [ ] Pydantic V2 config (`config.py`): frozen models, TOML loader from `~/.notes-os/config.toml`, sensible defaults
-- [ ] PARA routing state machine (`router.py`): SHOW_NOTE → AWAIT_CATEGORY → AWAIT_FOLDER → AWAIT_SUBFOLDER → CONFIRM_MOVE, with Archive auto-year and `[B]` back
-- [ ] Terminal UI (`ui.py`): note title + Markdown-rendered preview (HTML-stripped, 250 chars), single-keystroke category input, numbered list selection (Enter-confirmed)
-- [ ] Session tracking (`session.py`): moved/skipped/error counts, end-of-session summary, log to `~/.notes-os/logs/`
-- [ ] Heuristic task extraction (`extractor.py`, M1.5): regex/NLP scan for action items, off by default, writes Markdown checkboxes to `~/.notes-os/extracted-tasks/`
-- [ ] Textual TUI app (`app.py` + screens/widgets): HomeScreen splash + menu, SortScreen, TaskExtractScreen, wired end-to-end via `notes` command
+(M1 complete. Next: **M2 — Distillation Engine** via `/gsd-new-milestone`.)
 
 ### Out of Scope
 
@@ -91,8 +94,13 @@ A person can triage their Apple Notes inbox into a PARA-structured folder hierar
 | `backup.py` built immediately after AppleScript bridge validated | Write-path safety before any move operation | — Pending |
 | Task extraction off by default, heuristic-only in M1 | Avoid LLM dependency in M1; opt-in via config | — Pending |
 | `memo` is reference only, not a dependency | Interactive-first, no batch Python API; use for discovery shortcut | — Pending |
-| HTML stripping via stdlib `html.parser` | No BeautifulSoup dependency needed | — Pending |
+| HTML stripping via stdlib `html.parser` | No BeautifulSoup dependency needed | ✓ Good |
+| TUI does AppleScript/backup I/O in Textual thread workers | Blocking osascript on the event loop froze the app before first paint | ✓ Good (UAT fix) |
+| Lazy per-note body load + prefetch in SortScreen | Eager full-body fetch of a large inbox was unusably slow | ✓ Good (UAT fix) |
+| Arrow-highlight + Enter folder selection (supersedes single-key) | Single-key acted on the first digit → folders 10+ unreachable, mis-moves | ✓ Good (UAT fix) |
+| `markup=False` on text Statics; normalize Enter off `event.key` | Textual ate `[P]` shortcuts; Enter arrived as `\r` not `enter` | ✓ Good (UAT fix) |
+| 30s osascript timeout; idempotent-per-second `backup.create()` | Hung Apple Event froze quit; two same-second backups collided (ENOTEMPTY) | ✓ Good (UAT fix) |
 | GSD roadmap scoped to M1; M2 via `/gsd:new-milestone` | One shippable unit per milestone; cleanest GSD fit | — Pending |
 
 ---
-*Last updated: 2026-06-07 after initialization*
+*Last updated: 2026-06-08 — Milestone 1 complete & validated against real Apple Notes (8 UAT fixes folded in)*

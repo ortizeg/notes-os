@@ -1,50 +1,319 @@
-"""NotesOS application entry point.
+"""NotesOS Textual application entry point.
 
-The full Textual ``App`` subclass with screens and widgets arrives in Phase 6.
-This module provides the ``main()`` console entry point and a placeholder
-``NotesOSApp`` class so the ``notes`` command resolves and runs cleanly from
-day one, and so tests can import and instantiate the class without error.
+``NotesOSApp`` is the root :class:`~textual.app.App` subclass that launches the
+full keyboard-driven TUI.  It owns:
+
+- The **dependency-injection seam**: ``config``, ``repo``, and ``backup_manager``
+  are all optional constructor parameters.  When any parameter is ``None`` the
+  production dependency is built via deferred local imports so that
+  ``import notes_os.app`` NEVER pulls in AppleScript machinery (no osascript
+  imported at module load time).
+
+- The **screen registry**: ``SCREENS = {"home": HomeScreen}`` registered once;
+  ``on_mount`` pushes ``"home"`` to start the TUI.
+
+- **Global navigation bindings** (TUI-05 base — applied to all screens):
+    - ``Q`` → quit (``action_quit``)
+    - ``?`` → help (``action_help`` — per-screen help overlay)
+
+  Per-screen bindings (``↑`` / ``↓`` move highlight, ``Enter`` select,
+  ``Esc``/``B`` back one level) are declared on the individual screen classes,
+  not here, so the set of global bindings stays minimal.  Future screens in
+  06-02/06-03/06-04 MUST follow this same convention: add screen-local bindings
+  to the screen class, not to ``NotesOSApp``.
+
+- **Quit-confirm guard (TUI-05 / T-06-11)**: when a sort session is in progress
+  (``sort_in_progress`` is ``True``), ``Q`` presents a ``ConfirmQuitModal``
+  before exiting.  On Home/idle ``Q`` exits immediately.
+
+``main()`` is the ``notes`` CLI entry point (``notes_os.app:main`` in
+``pyproject.toml``).  It configures logging, resolves the package version, and
+calls ``NotesOSApp().run()`` to start the event loop.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
 import logging
+from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
+
+from textual.app import App, ComposeResult
+from textual.binding import Binding, BindingType
+from textual.screen import ModalScreen
+from textual.widgets import Button, Label
+
+from notes_os.screens.home import HomeScreen
+from notes_os.screens.sort import SortScreen
+from notes_os.screens.task_extract import TaskExtractScreen
+
+
+if TYPE_CHECKING:
+    from notes_os.backup import BackupManager
+    from notes_os.config import SorterConfig
+    from notes_os.sorter.notes import NotesRepositoryProtocol
 
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# CSS path (relative to this file so Textual resolves it correctly)
+# ---------------------------------------------------------------------------
 
-class NotesOSApp:
-    """Placeholder for the NotesOS Textual application.
+_CSS_PATH: Path = Path(__file__).parent / "app.tcss"
 
-    The Textual ``App`` subclass, HomeScreen, SortScreen, and all widgets
-    are implemented in Phase 6.  This placeholder exists so:
 
-    - ``notes_os.app`` is always importable.
-    - The ``notes`` entry point can start, log a banner, and exit cleanly.
-    - Unit tests can instantiate the class without pulling in Textual.
+# ---------------------------------------------------------------------------
+# ConfirmQuitModal — shown by action_quit when a sort session is in progress
+# ---------------------------------------------------------------------------
 
-    Args:
-        None — no constructor arguments in Phase 1.
+
+class ConfirmQuitModal(ModalScreen[bool]):
+    """Minimal two-button confirm modal for guarding quit during a sort session.
+
+    Presents a message and Yes / No buttons.  Dismissed with ``True`` (user
+    confirmed quit) or ``False`` (user cancelled).  Does NOT include
+    ``Header`` or ``Footer`` widgets — those raise ``NoMatches`` in modal
+    context (TUI discovery from 06-03).
+
+    Bindings:
+        - ``Y`` / ``y`` → confirm quit (dismiss ``True``).
+        - ``N`` / ``n`` → cancel (dismiss ``False``).
+        - ``Escape`` → cancel (dismiss ``False``).
     """
 
-    def run(self) -> None:
-        """Log a startup banner.
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("y", "confirm", "Yes, quit", show=True),
+        Binding("n", "cancel", "No, stay", show=True),
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
 
-        In Phase 6 this method will launch the Textual TUI event loop.
-        For now it simply logs that the TUI is not yet available.
+    def compose(self) -> ComposeResult:
+        """Lay out the confirm message and Yes/No buttons.
+
+        Yields:
+            Label with the prompt message, two Buttons (Yes / No).
         """
-        logger.info("NotesOSApp.run() — full TUI launches in Phase 6.")
+        yield Label(
+            "A sort session is in progress.\nQuit anyway? (Y / N)",
+            id="confirm-quit-label",
+        )
+        yield Button("Yes — quit", id="confirm-quit-yes", variant="error")
+        yield Button("No — stay", id="confirm-quit-no", variant="primary")
+
+    def action_confirm(self) -> None:
+        """Dismiss the modal with ``True`` — user chose to quit."""
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        """Dismiss the modal with ``False`` — user chose to stay."""
+        self.dismiss(False)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle Yes/No button clicks.
+
+        Args:
+            event: The :class:`~textual.widgets.Button.Pressed` event.
+        """
+        if event.button.id == "confirm-quit-yes":
+            self.dismiss(True)
+        elif event.button.id == "confirm-quit-no":
+            self.dismiss(False)
+
+
+class NotesOSApp(App[None]):
+    """Root Textual application for NotesOS.
+
+    Registers all screens and declares the global navigation bindings that
+    apply throughout the TUI (Q quit, ? help).  Individual screens add their
+    own local bindings (↑↓ move, Enter select, Esc back).
+
+    Dependency-injection seam — mirrors ``build_default_controller(config)``
+    in :mod:`notes_os.sorter.controller`:
+
+    - When ``repo`` is ``None``, the production
+      :class:`~notes_os.backup.BackingUpNotesRepository` wrapping an
+      :class:`~notes_os.sorter.notes.AppleScriptNotesRepository` is built via
+      deferred local imports, preserving the backup-then-move invariant (SC2,
+      T-06-01 mitigation).
+    - When ``repo`` is supplied (Pilot tests), it is used as-is — no
+      AppleScript is imported.
+    - ``backup_manager`` follows the same pattern: built from ``config.backup``
+      when ``None``, or used as injected.
+
+    Attributes:
+        app_config: The frozen :class:`~notes_os.config.SorterConfig` driving
+            this session.  Named ``app_config`` (not ``config``) to avoid
+            shadowing the Textual :attr:`~textual.app.App.config` attribute.
+        repo: The :class:`~notes_os.sorter.notes.NotesRepositoryProtocol`
+            implementation used for all inbox reads and writes.
+        backup_manager: The :class:`~notes_os.backup.BackupManager` used for
+            backup-status queries in the status panel (and for pre-write backups
+            when the production repo is active).
+        sort_in_progress: Set to ``True`` by :class:`~notes_os.screens.sort.SortScreen`
+            when the first note is processed; reset to ``False`` at session finish.
+            Drives the :meth:`action_quit` guard (TUI-05 / T-06-11 mitigation).
+
+    Args:
+        config: Optional :class:`~notes_os.config.SorterConfig`.  Built from
+            the default ``~/.notes-os/config.toml`` when ``None``.
+        repo: Optional :class:`~notes_os.sorter.notes.NotesRepositoryProtocol`
+            implementation.  When ``None``, the production AppleScript-backed
+            repository is constructed.
+        backup_manager: Optional :class:`~notes_os.backup.BackupManager`.
+            When ``None``, constructed from ``config.backup``.
+    """
+
+    CSS_PATH = str(_CSS_PATH)
+
+    SCREENS: ClassVar[dict[str, type]] = {  # type: ignore[assignment]
+        "home": HomeScreen,
+        "sort": SortScreen,
+        "task_extract": TaskExtractScreen,
+    }
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("q", "quit", "Quit", show=True),
+        Binding("question_mark", "help", "Help", show=True),
+    ]
+
+    def __init__(
+        self,
+        config: SorterConfig | None = None,
+        repo: NotesRepositoryProtocol | None = None,
+        backup_manager: BackupManager | None = None,
+    ) -> None:
+        """Initialise the app, building production dependencies when not injected.
+
+        Deferred imports for production-only classes ensure that
+        ``import notes_os.app`` does not pull in AppleScript machinery
+        (``osascript`` is never imported at module load time).
+
+        Args:
+            config: Optional frozen :class:`~notes_os.config.SorterConfig`.
+                When ``None``, :func:`~notes_os.config.load_config` is called to
+                read ``~/.notes-os/config.toml`` or use built-in defaults.
+            repo: Optional :class:`~notes_os.sorter.notes.NotesRepositoryProtocol`
+                implementation.  When ``None``, the production
+                :class:`~notes_os.backup.BackingUpNotesRepository` wrapping
+                :class:`~notes_os.sorter.notes.AppleScriptNotesRepository` is
+                built from ``config.bridge`` and ``config.backup``.
+            backup_manager: Optional :class:`~notes_os.backup.BackupManager`.
+                When ``None``, constructed from ``config.backup``.  Shared between
+                the repo (pre-write backups) and the status panel (last-backup
+                display).
+        """
+        super().__init__()
+
+        if config is None:
+            from notes_os.config import load_config  # deferred — avoids home-dir I/O at import
+
+            config = load_config()
+
+        self.app_config: SorterConfig = config
+
+        if backup_manager is None:
+            from notes_os.backup import BackupManager as _BackupManager  # deferred
+
+            backup_manager = _BackupManager(config.backup)
+
+        self.backup_manager: BackupManager = backup_manager
+
+        if repo is None:
+            from notes_os.backup import (
+                BackingUpNotesRepository,
+            )  # deferred — avoids AppleScript import
+            from notes_os.sorter.notes import AppleScriptNotesRepository  # deferred
+
+            inner = AppleScriptNotesRepository(config.bridge)
+            repo = BackingUpNotesRepository(inner, backup_manager, config.backup)
+
+        self.repo: NotesRepositoryProtocol = repo
+
+        # Quit-confirm guard flag — set True by SortScreen on first record;
+        # reset to False at _finish().  Drives action_quit (TUI-05 / T-06-11).
+        self.sort_in_progress: bool = False
+
+        logger.debug(
+            "NotesOSApp initialised — repo=%s, backup_dir=%s",
+            type(self.repo).__name__,
+            self.app_config.backup.backup_dir,
+        )
+
+    def on_mount(self) -> None:
+        """Push the HomeScreen when the app mounts.
+
+        The HomeScreen is the root screen of the TUI.  All other navigation
+        (SortScreen, HelpOverlay, ConfirmQuit) is pushed on top of it by
+        subsequent actions.
+        """
+        self.push_screen("home")
+
+    async def action_quit(self) -> None:
+        """Quit the app, with a confirm guard when a sort session is in progress.
+
+        TUI-05 / T-06-11 mitigation: a bare ``Q`` quits immediately from
+        Home/idle.  When ``self.sort_in_progress`` is ``True``, a
+        :class:`ConfirmQuitModal` is pushed first.  If the user confirms
+        (dismisses with ``True``), :meth:`~textual.app.App.exit` is called.
+        If the user cancels (dismisses with ``False``), the app continues.
+
+        Overrides ``App.action_quit`` (which is also ``async``) to inject the
+        session-guard logic before delegating to ``self.exit()``.
+        """
+        if not self.sort_in_progress:
+            logger.debug("action_quit: no session in progress — exiting immediately")
+            self.exit()
+            return
+
+        logger.debug("action_quit: sort session in progress — showing confirm modal")
+
+        def _on_confirm(confirmed: bool | None) -> None:
+            """Handle the ConfirmQuitModal result.
+
+            Args:
+                confirmed: ``True`` when the user chose to quit; ``False`` or
+                    ``None`` to continue the session.
+            """
+            if confirmed:
+                logger.info("action_quit: user confirmed quit during active session")
+                self.exit()
+            else:
+                logger.debug("action_quit: user cancelled quit — resuming session")
+
+        self.push_screen(ConfirmQuitModal(), _on_confirm)
+
+    def action_help(self) -> None:
+        """Dispatch help request to the active screen.
+
+        The active screen is responsible for rendering its own contextual help
+        (e.g. a key-legend overlay).  This global action simply calls through
+        so the binding appears in the footer but the actual UI is per-screen.
+        """
+        action_fn = getattr(self.screen, "action_help", None)
+        if callable(action_fn):
+            action_fn()
+
+    def compose(self) -> ComposeResult:
+        """Yield no widgets — the HomeScreen is pushed in on_mount.
+
+        Yields:
+            Nothing: the app shell has no persistent widgets of its own.
+        """
+        return
+        yield  # pragma: no cover — unreachable; makes the generator valid
 
 
 def main() -> None:
     """Entry point for the ``notes`` console command.
 
     Configures basic logging, resolves the package version via
-    ``importlib.metadata`` (falls back to ``"0.0.0+unknown"`` when the
-    package is not installed or the VCS tag is absent), logs a banner,
-    and returns.  The Textual app launch is wired in Phase 6.
+    ``importlib.metadata`` (falls back to ``"0.0.0+unknown"`` when the package
+    is not installed or the VCS tag is absent), and launches the full Textual
+    TUI via :class:`NotesOSApp`.
+
+    The ``notes = notes_os.app:main`` entry point in ``pyproject.toml`` is
+    unchanged from Phase 1 — no subcommands are added in Phase 6.
 
     Returns:
         None
@@ -59,4 +328,5 @@ def main() -> None:
     except importlib.metadata.PackageNotFoundError:
         version = "0.0.0+unknown"
 
-    logger.info("NotesOS %s — TUI arrives in Phase 6.", version)
+    logger.info("NotesOS %s — launching TUI.", version)
+    NotesOSApp().run()

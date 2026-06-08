@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 05-task-extraction 05-01-PLAN.md
-last_updated: "2026-06-07T23:00:48.750Z"
-last_activity: 2026-06-07 -- Phase 05 plan 01 executed; TASK-01 extractor.py pure heuristic scanner; ExtractedTask frozen Pydantic V2 model; 25 tests 100% coverage; 274 total tests 95.08% overall coverage
+stopped_at: Completed 06-tui-integration/06-04-PLAN.md (Milestone 1 complete)
+last_updated: "2026-06-08T01:00:00.000Z"
+last_activity: 2026-06-08 -- Phase 06 plan 04 executed; ConfirmQuitModal + sort_in_progress guard; SC4 nav Pilot suite (10 tests); E2E Home→Sort→TaskExtract→finish walk; integration smoke; 329 tests 92% coverage
 progress:
   total_phases: 6
-  completed_phases: 5
-  total_plans: 15
-  completed_plans: 15
-  percent: 83
+  completed_phases: 6
+  total_plans: 19
+  completed_plans: 19
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-07)
 
 **Core value:** A person can triage their Apple Notes inbox into PARA folders with single keystrokes — fast, mouse-free, and non-destructive — with the Notes database backed up before every write.
-**Current focus:** Phase 03 — Backup (next)
+**Current focus:** Milestone 1 COMPLETE & validated. Next: M2 — Distillation Engine (`/gsd-new-milestone`).
 
 ## Current Position
 
-Phase: 05 (Task Extraction) — In Progress (1/2 plans complete)
-Plan: 2 of 2 complete
-Status: Phase 5 plan 01 done — pure heuristic extract_tasks + frozen ExtractedTask; 3-family LOCKED regexes; 100% extractor coverage; 274 tests overall 95.08%; 1 plan remaining (05-02 extraction UI)
-Last activity: 2026-06-07 -- Phase 05 plan 01 executed; TASK-01 extractor.py pure heuristic scanner; ExtractedTask frozen Pydantic V2 model; 25 tests 100% coverage; 274 total tests 95.08% overall coverage
+Milestone 1 (PARA Notes Sorter) — COMPLETE ✓ and VALIDATED against real Apple Notes (2026-06-08).
+All 6 phases / 19 plans done; ~356 tests, ~92% coverage; PRs #1–#6.
+Real-Notes UAT surfaced and fixed 8 issues the mocked suite couldn't catch (blank screen, quit hang,
+slow inbox, markup, archive crash, FDA permission, same-second backup ENOTEMPTY, multi-digit folder + Enter-as-CR).
+Awaiting: merge PR #6 (feat/tui) → main, then optional `/gsd-complete-milestone` archive.
 
-Progress: [████░░░░░░] 50% (3 of 6 phases complete)
+Progress: [██████████] 100% (6 of 6 phases complete) — Milestone 1 COMPLETE
 
 ## Performance Metrics
 
@@ -66,6 +67,10 @@ Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 | Phase 04-sorting-core P05 | 371 | 2 tasks | 3 files |
 | Phase 05-task-extraction P01 | 135 | 3 tasks | 3 files |
 | Phase 05-task-extraction P02 | 7m | 3 tasks | 7 files |
+| Phase 06-tui-integration P01 | 10min | 3 tasks | 11 files |
+| Phase 06-tui-integration P02 | 530 | 2 tasks | 5 files |
+| Phase 06-tui-integration P03 | 10min | 2 tasks | 5 files |
+| Phase 06-tui-integration P04 | 45min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -114,6 +119,16 @@ Recent decisions affecting current work:
 - [Phase 05-task-extraction]: ExtractedTask has single text: str field — minimal model; downstream UI/writer adds metadata in 05-02 if needed (YAGNI)
 - [Phase 05-task-extraction]: extract_tasks returns [] on empty/whitespace input — no exception raised; extractor has no failure modes in plan 01
 - [Phase 05-task-extraction]: notes_os.sorter.extractor appended to mypy disallow_any_explicit=false override (7th entry); ExtractedTask(BaseModel) inherits Pydantic Any API
+- [Phase ?]: self.app_config names SorterConfig to avoid Textual App.config collision
+- [Phase ?]: Deferred imports in NotesOSApp.__init__ mirror build_default_controller() — no AppleScript at module load
+- [Phase ?]: Pilot tests use app.screen.query_one() not app.query_one() — HomeScreen sits atop default base Screen in stack
+- [Phase ?]: SortScreen drives Router directly via discrete Textual key events — no blocking SortController.run()
+- [Phase ?]: Spy BackupManager in SC2 tests: macOS rename fails on same-second timestamp collision; spy proves create() called while keeping BackingUpNotesRepository real
+- [Phase ?]: _after_move(note) no-op seam in SortScreen immediately after record_move() — 06-03 fills with task extraction
+- [Phase 06-04]: ConfirmQuitModal has no Header/Footer — macOS Textual: Header._on_mount raises NoMatches in modal context (06-03 discovery enforced)
+- [Phase 06-04]: async action_quit override required — parent App.action_quit is async def; sync override fails mypy strict override check
+- [Phase 06-04]: sort_in_progress: bool on NotesOSApp (not SortScreen) — action_quit reads app-level flag without needing a screen cast
+- [Phase 06-04]: Spy BackupManager mandatory for multi-move Pilot tests — real BackupManager raises BackupError on same-second atomic rename collision (macOS constraint)
 
 ### Pending Todos
 
@@ -126,6 +141,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T23:00:48.746Z
-Stopped at: Completed 05-task-extraction 05-01-PLAN.md
+Last session: 2026-06-08T01:00:00.000Z
+Stopped at: Completed 06-tui-integration/06-04-PLAN.md (Milestone 1 complete)
 Resume file: None

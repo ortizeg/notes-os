@@ -31,7 +31,7 @@ from html.parser import HTMLParser
 from typing import Protocol, runtime_checkable
 
 from notes_os.exceptions import FolderNotFoundError, NotesError, NotesMoveError
-from notes_os.sorter.models import BridgeConfig, FolderPath, Note, ParaStructure
+from notes_os.sorter.models import BridgeConfig, FolderPath, Note, NoteRef, ParaStructure
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,16 @@ _FIELD_SEP: str = chr(31)
 
 _RECORD_SEP: str = chr(30)
 """ASCII Record Separator (RS, 0x1E) — separates consecutive records."""
+
+_OSASCRIPT_TIMEOUT_SECONDS: float = 30.0
+"""Hard ceiling for any single ``osascript`` call.
+
+Without a timeout a stuck Apple Event — most commonly the first run blocking on
+the macOS "control Notes" Automation permission prompt, which can be hidden
+behind a full-screen TUI — would block the calling thread (and therefore the
+app's shutdown) indefinitely.  On timeout the call is abandoned and surfaced as
+a :class:`~notes_os.exceptions.NotesError` so callers degrade gracefully.
+"""
 
 # Compiled pattern for collapsing runs of whitespace (used by _strip_html).
 _WS_RE: re.Pattern[str] = re.compile(r"\s+")
@@ -129,6 +139,62 @@ class NotesRepositoryProtocol(Protocol):
         Raises:
             NotesError: If the osascript subprocess exits with a non-zero
                 return code.
+        """
+        ...
+
+    def count_inbox_notes(self) -> int:
+        """Return the number of notes in the configured inbox folder.
+
+        Uses ``count notes of folder`` — a single fast AppleScript call that
+        does not fetch any note content, making it significantly faster than
+        ``len(get_inbox_notes())`` on large inboxes.
+
+        Returns:
+            The number of notes currently in the configured inbox folder.
+            Returns 0 when the inbox is empty or the osascript output is blank.
+
+        Raises:
+            NotesError: If the osascript subprocess exits with a non-zero
+                return code or returns non-numeric output.
+        """
+        ...
+
+    def get_inbox_note_refs(self) -> list[NoteRef]:
+        """Return lightweight references (id + title) for all inbox notes.
+
+        Fetches only note identifiers and titles via two bulk AppleScript
+        property reads — no HTML bodies are fetched.  This is the fast path
+        for large inboxes: two Apple Events total regardless of inbox size.
+
+        Returns:
+            A list of :class:`~notes_os.sorter.models.NoteRef` objects, each
+            with ``id`` and ``title`` only.  Returns an empty list when the
+            inbox is empty or the AppleScript returns no output.
+
+        Raises:
+            NotesError: If the osascript subprocess exits with a non-zero
+                return code.
+        """
+        ...
+
+    def get_note(self, note_id: str) -> Note:
+        """Fetch a single note's full content (id, title, body, preview) by id.
+
+        Used by the lazy-loading TUI path to fetch each note's HTML body on
+        demand after the inbox refs have been loaded.
+
+        Args:
+            note_id: The opaque Apple Notes note identifier
+                (e.g. ``"x-coredata://..."``).
+
+        Returns:
+            A :class:`~notes_os.sorter.models.Note` with all four fields
+            populated (``id``, ``title``, ``body``, ``preview``).
+
+        Raises:
+            NotesMoveError: If no note with ``note_id`` exists in Apple Notes.
+            NotesError: If the osascript subprocess exits with a non-zero
+                return code for any other reason.
         """
         ...
 
@@ -256,16 +322,30 @@ class AppleScriptNotesRepository:
             The captured stdout of the subprocess on success (may be empty).
 
         Raises:
-            NotesError: If the subprocess exits with a non-zero return code.
-                The error message contains the stderr output from osascript, or
-                ``"osascript failed"`` when stderr is empty.
+            NotesError: If the subprocess exits with a non-zero return code
+                (message contains osascript's stderr, or ``"osascript failed"``
+                when stderr is empty), or if it does not return within
+                ``_OSASCRIPT_TIMEOUT_SECONDS`` (e.g. blocked on the macOS
+                Automation permission prompt).
         """
-        result = subprocess.run(  # noqa: S603  # fixed trusted macOS binary, list args, no shell=True
-            ["osascript", "-e", script],  # noqa: S607  # osascript is a fixed macOS system binary at /usr/bin/osascript
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(  # noqa: S603  # fixed trusted macOS binary, list args, no shell=True
+                ["osascript", "-e", script],  # noqa: S607  # osascript is a fixed macOS system binary at /usr/bin/osascript
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_OSASCRIPT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            msg = (
+                f"osascript timed out after {_OSASCRIPT_TIMEOUT_SECONDS:.0f}s — "
+                "Apple Notes may be waiting on an Automation permission prompt. "
+                "Grant access in System Settings > Privacy & Security > Automation, "
+                "or run `osascript -e 'tell application \"Notes\" to count notes'` "
+                "once and click Allow."
+            )
+            logger.warning(msg)
+            raise NotesError(msg) from exc
         if result.returncode != 0:
             logger.warning(
                 "osascript exited %d: %s",
@@ -345,6 +425,129 @@ end tell"""
                 )
             )
         return notes
+
+    def get_inbox_note_refs(self) -> list[NoteRef]:
+        """Return lightweight references (id + title) for all inbox notes.
+
+        Fetches only note identifiers and titles using two bulk AppleScript
+        property-list reads — ``id of notes`` and ``name of notes``.  This
+        issues two Apple Events total regardless of inbox size, skipping the
+        expensive ``body`` property entirely.
+
+        Returns:
+            A list of :class:`~notes_os.sorter.models.NoteRef` objects.
+            Returns an empty list when the inbox is empty or osascript output
+            is blank.
+
+        Raises:
+            NotesError: On non-zero osascript exit code.
+        """
+        inbox = self._config.inbox_folder.replace('"', '""')
+        script = f"""\
+tell application "Notes"
+    set fs to (ASCII character 31)
+    set rs to (ASCII character 30)
+    set inbox to folder "{inbox}"
+    set theIDs to id of notes of inbox
+    set theNames to name of notes of inbox
+    set output to ""
+    repeat with i from 1 to (count of theIDs)
+        if output is not "" then set output to output & rs
+        set output to output & (item i of theIDs) & fs & (item i of theNames)
+    end repeat
+    return output
+end tell"""
+        stdout = self._run_osascript(script)
+        if not stdout or not stdout.strip():
+            return []
+
+        refs: list[NoteRef] = []
+        for record in stdout.split(_RECORD_SEP):
+            # Skip empty records (e.g. from a trailing _RECORD_SEP)
+            if not record or not record.strip():
+                continue
+            parts = record.split(_FIELD_SEP, 1)
+            if len(parts) != 2:
+                logger.warning(
+                    "Skipping malformed note-ref record (expected 2 fields, got %d)",
+                    len(parts),
+                )
+                continue
+            note_id, title = parts
+            refs.append(NoteRef(id=note_id.strip(), title=title.strip()))
+        return refs
+
+    def get_note(self, note_id: str) -> Note:
+        """Fetch a single note's full content (id, title, body, preview) by id.
+
+        Issues one AppleScript call that reads the ``id``, ``name``, and
+        ``body`` of the note addressed by *note_id*.  If the note id does not
+        exist, ``osascript`` exits non-zero and the resulting ``NotesError``
+        is re-raised as ``NotesMoveError`` to match the not-found convention
+        used by :meth:`move_note`.
+
+        Args:
+            note_id: The opaque Apple Notes note identifier.
+
+        Returns:
+            A :class:`~notes_os.sorter.models.Note` with all four fields
+            populated.
+
+        Raises:
+            NotesMoveError: If no note with ``note_id`` exists in Apple Notes.
+            NotesError: If osascript exits non-zero for any other reason.
+        """
+        escaped_id = note_id.replace('"', '""')
+        script = f"""\
+tell application "Notes"
+    set fs to (ASCII character 31)
+    set aNote to note id "{escaped_id}"
+    return (id of aNote) & fs & (name of aNote) & fs & (body of aNote)
+end tell"""
+        try:
+            stdout = self._run_osascript(script)
+        except NotesError as exc:
+            raise NotesMoveError(f"note not found: {note_id}") from exc
+
+        parts = stdout.split(_FIELD_SEP, 2)
+        if len(parts) != 3:
+            raise NotesMoveError(f"note not found: {note_id}")
+        fetched_id, title, body = parts
+        return Note(
+            id=fetched_id.strip(),
+            title=title.strip(),
+            body=body,
+            preview=_strip_html(body, self._config.preview_length),
+        )
+
+    def count_inbox_notes(self) -> int:
+        """Return the number of notes in the configured inbox folder.
+
+        Issues a single ``count notes of folder`` AppleScript call — no note
+        content is fetched.  Significantly faster than
+        ``len(get_inbox_notes())`` on large inboxes.
+
+        Returns:
+            The number of notes in the inbox.  Returns ``0`` when the inbox
+            is empty or the osascript output is blank.
+
+        Raises:
+            NotesError: If osascript exits with a non-zero return code or
+                returns non-numeric output.
+        """
+        inbox = self._config.inbox_folder.replace('"', '""')
+        script = f"""\
+tell application "Notes"
+    return count notes of folder "{inbox}"
+end tell"""
+        stdout = self._run_osascript(script)
+        stripped = stdout.strip()
+        if not stripped:
+            return 0
+        try:
+            return int(stripped)
+        except ValueError:
+            raise NotesError(f"count_inbox_notes: expected integer, got {stripped!r}") from None
 
     def get_para_structure(self) -> ParaStructure:
         """Return a snapshot of the PARA folder hierarchy in Apple Notes.

@@ -27,7 +27,7 @@ jobs:
       - name: Install project and test dependencies
         run: |
           pip install -e .
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-asyncio
 
       - name: Run tests with coverage
         run: pytest -m 'not integration' --cov=notes_os --cov-report=xml --cov-fail-under=80
