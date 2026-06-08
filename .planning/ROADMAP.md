@@ -150,14 +150,14 @@ Plans:
   4. `Esc`/`B` backs up one screen level, `Q` quits from any screen, `?` shows contextual help — navigation is consistent across all screens
   5. CI test suite (Textual Pilot + mocks) passes on macOS-latest × Python 3.11 and 3.12 with overall ≥80% coverage gate green
 
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
 
-- [ ] 06-01: `app.py` + `screens/home.py` — Textual app shell, HomeScreen splash, menu, live status indicators
-- [ ] 06-02: `screens/sort.py` + widget plumbing — SortScreen wrapping router/UI/backup flow
-- [ ] 06-03: `screens/task_extract.py` — TaskExtractScreen wrapping extractor/UI, navigation integration
-- [ ] 06-04: End-to-end wiring + test suite — Textual Pilot tests, 80% overall coverage gate, CI green
+- [ ] 06-01-PLAN.md — Textual app shell (NotesOSApp DI seam) + HomeScreen splash/menu/live status + async-test (pytest-asyncio) setup + nav base
+- [ ] 06-02-PLAN.md — SortScreen drives the UI-agnostic Router directly (event-driven, not the blocking controller) + Home→Sort wiring + SC2 Pilot test
+- [ ] 06-03-PLAN.md — TaskExtractScreen (add-all/select/skip → TaskWriter) wired into SortScreen `_after_move`, gated on task_extraction + SC3 Pilot test
+- [ ] 06-04-PLAN.md — Harmonized TUI-05 nav (quit-confirm, contextual help) + comprehensive Pilot suite (SC4 + end-to-end) + optional integration smoke + ≥80% gate
 
 ---
 
