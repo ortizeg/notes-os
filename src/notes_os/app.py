@@ -38,6 +38,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 
 from notes_os.screens.home import HomeScreen
+from notes_os.screens.sort import SortScreen
 
 
 if TYPE_CHECKING:
@@ -97,7 +98,10 @@ class NotesOSApp(App[None]):
 
     CSS_PATH = str(_CSS_PATH)
 
-    SCREENS: ClassVar[dict[str, type]] = {"home": HomeScreen}  # type: ignore[assignment]
+    SCREENS: ClassVar[dict[str, type]] = {  # type: ignore[assignment]
+        "home": HomeScreen,
+        "sort": SortScreen,
+    }
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit", show=True),

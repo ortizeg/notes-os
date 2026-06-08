@@ -186,14 +186,14 @@ class HomeScreen(Screen[None]):
     # ------------------------------------------------------------------
 
     def action_sort(self) -> None:
-        """Seam for the Sort Inbox menu item — implemented in Phase 06-02.
+        """Push the SortScreen to begin inbox triage (Phase 06-02).
 
-        In this plan (06-01) the sort screen does not exist yet.  This method
-        is a clearly-named placeholder that 06-02 will fill in with
-        ``self.app.push_screen("sort")``.  A log message is emitted so the
-        action is visible in the debug log during development.
+        Pushes ``"sort"`` from the app's SCREENS registry, which resolves to
+        :class:`~notes_os.screens.sort.SortScreen`.  The SortScreen inherits
+        the app's injected repo (already wrapped in BackingUpNotesRepository)
+        so backup-then-move holds for every move the user makes (SC2).
         """
-        logger.info("HomeScreen.action_sort() called — SortScreen wired in Phase 06-02.")
+        self.app.push_screen("sort")
 
     def action_noop(self) -> None:
         """No-op handler for Esc on the root screen.
