@@ -45,7 +45,9 @@ if TYPE_CHECKING:
 # Helpers
 # ---------------------------------------------------------------------------
 
-_FAKE_BACKUP_PATH = "/nonexistent/NoteStore_2026-01-01_12-00-00"  # test-only sentinel; never created
+_FAKE_BACKUP_PATH = (
+    "/nonexistent/NoteStore_2026-01-01_12-00-00"  # test-only sentinel; never created
+)
 _FAKE_BACKUP = Backup(
     timestamp=datetime(2026, 1, 1, 12, 0, 0),
     path=_FAKE_BACKUP_PATH,  # type: ignore[arg-type]  # path coerced to str; test sentinel
