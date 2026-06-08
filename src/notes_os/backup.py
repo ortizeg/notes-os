@@ -303,7 +303,15 @@ class BackupManager:
 
             backups.append(Backup(timestamp=ts, label=label, path=child))
 
-        backups.sort(key=lambda b: b.timestamp, reverse=True)
+        # Secondary sort by directory name makes ordering deterministic when two
+        # backups share a second: the dir-name timestamp has second resolution, so
+        # same-second backups parse to EQUAL datetimes and a timestamp-only sort
+        # leaves their relative order at the mercy of iterdir() (filesystem order).
+        # Production backups are unlabelled and reuse within a second (see create()),
+        # so same-second collisions only arise with distinct labels — but the
+        # tie-break keeps list(), and therefore prune()/restore('latest'), total-
+        # ordered and stable regardless.
+        backups.sort(key=lambda b: (b.timestamp, b.path.name), reverse=True)
         return backups
 
     def restore(self, timestamp: str = "latest") -> Backup:
