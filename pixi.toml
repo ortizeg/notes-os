@@ -12,6 +12,7 @@ ruff = "*"
 mypy = "*"
 pytest = "*"
 pytest-cov = "*"
+pytest-asyncio = "*"
 
 [tasks]
 notes = "notes"

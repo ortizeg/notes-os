@@ -79,3 +79,4 @@ markers = [
   "slow: takes >5s",
 ]
 addopts = ["-m", "not integration"]
+asyncio_mode = "auto"
