@@ -1,0 +1,230 @@
+"""HomeScreen — NotesOS splash, keyboard menu, and live status panel.
+
+This is the root screen pushed by :class:`~notes_os.app.NotesOSApp` when the
+TUI mounts.  It displays:
+
+1. **Splash panel** (``#splash``): ASCII "NotesOS" logo plus the resolved
+   package version (``importlib.metadata``, with the same
+   ``PackageNotFoundError → "0.0.0+unknown"`` fallback as ``main()``).
+
+2. **Menu** (``#menu``): A keyboard-navigable :class:`~textual.widgets.OptionList`
+   with two items — "Sort Inbox" and "Quit".  Supports ↑/↓ to move the
+   highlight and Enter to activate (TUI-05 nav base).
+
+3. **Status panel** (``#status``): Three live indicators computed in
+   ``on_mount`` from the injected dependencies:
+
+   - *Inbox* — ``len(self.app.repo.get_inbox_notes())`` notes waiting.
+   - *Last backup* — newest from ``self.app.backup_manager.list()``.  Shows
+     ``"never"`` when no backups exist; otherwise formats
+     ``backup.timestamp.strftime("%Y-%m-%d %H:%M:%S")``.
+   - *Backend* — the HONEST M1 label ``"sort-only (M1)"``; NO fabricated LLM
+     backend (T-06-02 mitigation).
+
+Navigation bindings on HomeScreen (TUI-05):
+    - ``?`` → contextual help overlay (``action_help`` — overrides the global
+      action at the screen level to show a home-specific key legend).
+    - ↑/↓ and Enter are natively handled by :class:`~textual.widgets.OptionList`.
+    - Esc has nothing to back out to (root screen) — it is treated as a no-op.
+"""
+
+from __future__ import annotations
+
+import importlib.metadata
+import logging
+from typing import TYPE_CHECKING, ClassVar
+
+from textual.binding import Binding, BindingType
+from textual.screen import Screen
+from textual.widgets import Footer, Header, OptionList, Static
+from textual.widgets._option_list import Option
+
+
+if TYPE_CHECKING:
+    from textual.app import ComposeResult
+
+    from notes_os.app import NotesOSApp
+
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_MENU_SORT = "sort"
+_MENU_QUIT = "quit"
+
+_ASCII_LOGO = r"""
+ _   _       _            ___  ____
+| \ | | ___ | |_ ___  ___|/ _ \/ ___|
+|  \| |/ _ \| __/ _ \/ __| | | \___ \
+| |\  | (_) | ||  __/\__ \ |_| |___) |
+|_| \_|\___/ \__\___||___/\___/|____/
+""".strip()
+
+_HELP_TEXT = """\
+Key legend — Home Screen
+  ↑ / ↓   Move menu selection
+  Enter    Activate selected item
+  Q        Quit NotesOS
+  ?        Show this help
+"""
+
+
+class HomeScreen(Screen[None]):
+    """Root TUI screen: ASCII splash, keyboard menu, and live status panel.
+
+    All live data is sourced from ``self.app.repo`` and
+    ``self.app.backup_manager`` so injected test doubles drive the values
+    deterministically without any AppleScript (SC1 provable via Pilot tests).
+
+    Bindings declared here are SCREEN-LOCAL and supplement the global Q/? bindings
+    declared on :class:`~notes_os.app.NotesOSApp`.
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "noop", "Back", show=False),
+    ]
+
+    # ------------------------------------------------------------------
+    # Compose
+    # ------------------------------------------------------------------
+
+    def compose(self) -> ComposeResult:
+        """Lay out the splash, menu, and status widgets.
+
+        Yields:
+            Header, splash Static, version Static, menu OptionList, status
+            Statics, and Footer.
+        """
+        yield Header(show_clock=False)
+
+        version = _resolve_version()
+
+        yield Static(_ASCII_LOGO, id="splash")
+        yield Static(f"v{version}", id="version-label")
+
+        yield OptionList(
+            Option("Sort Inbox", id=_MENU_SORT),
+            Option("Quit", id=_MENU_QUIT),
+            id="menu",
+        )
+
+        yield Static("Inbox: —", id="status-inbox")
+        yield Static("Last backup: —", id="status-backup")
+        yield Static("Backend: sort-only (M1)", id="status-backend")
+
+        yield Footer()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def on_mount(self) -> None:
+        """Populate live status indicators after the screen mounts.
+
+        Reads inbox count, last-backup timestamp, and backend label from the
+        injected dependencies (available via ``self.app``) and updates the
+        corresponding :class:`~textual.widgets.Static` widgets.
+        """
+        app: NotesOSApp = self.app  # type: ignore[assignment]
+
+        # Inbox count
+        inbox_count = 0
+        try:
+            notes = app.repo.get_inbox_notes()
+            inbox_count = len(notes)
+            self.query_one("#status-inbox", Static).update(f"Inbox: {inbox_count} note(s)")
+        except Exception:
+            logger.warning("HomeScreen: failed to fetch inbox count", exc_info=True)
+            self.query_one("#status-inbox", Static).update("Inbox: (unavailable)")
+
+        # Last backup
+        try:
+            backups = app.backup_manager.list()
+            if backups:
+                ts_str = backups[0].timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                self.query_one("#status-backup", Static).update(f"Last backup: {ts_str}")
+            else:
+                self.query_one("#status-backup", Static).update("Last backup: never")
+        except Exception:
+            logger.warning("HomeScreen: failed to fetch backup list", exc_info=True)
+            self.query_one("#status-backup", Static).update("Last backup: (unavailable)")
+
+        # Backend label — honest M1 string; NOT fabricated LLM backend (T-06-02)
+        self.query_one("#status-backend", Static).update("Backend: sort-only (M1)")
+
+        logger.debug("HomeScreen mounted — inbox_count=%d", inbox_count)
+
+    # ------------------------------------------------------------------
+    # Message handlers
+    # ------------------------------------------------------------------
+
+    def on_option_list_option_selected(
+        self,
+        event: OptionList.OptionSelected,
+    ) -> None:
+        """Handle menu item activation.
+
+        "Sort Inbox" is a placeholder seam for Phase 06-02 (SortScreen does not
+        exist yet); it logs the action and is a no-op in this plan.  "Quit"
+        calls the global quit action.
+
+        Args:
+            event: The :class:`~textual.widgets.OptionList.OptionSelected`
+                message carrying the activated option.
+        """
+        option_id = event.option.id
+        if option_id == _MENU_SORT:
+            self.action_sort()
+        elif option_id == _MENU_QUIT:
+            self.app.exit()
+
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
+
+    def action_sort(self) -> None:
+        """Seam for the Sort Inbox menu item — implemented in Phase 06-02.
+
+        In this plan (06-01) the sort screen does not exist yet.  This method
+        is a clearly-named placeholder that 06-02 will fill in with
+        ``self.app.push_screen("sort")``.  A log message is emitted so the
+        action is visible in the debug log during development.
+        """
+        logger.info("HomeScreen.action_sort() called — SortScreen wired in Phase 06-02.")
+
+    def action_noop(self) -> None:
+        """No-op handler for Esc on the root screen.
+
+        The HomeScreen is the root; there is nothing to back out to.  Esc is
+        silently swallowed here.  Phase 06-04 may replace this with a
+        quit-confirm dialog.
+        """
+
+    def action_help(self) -> None:
+        """Show a contextual help overlay for the home screen.
+
+        Displays the key legend as a temporary notification so the user can see
+        available bindings without leaving the home screen.
+        """
+        self.notify(_HELP_TEXT, title="Help", timeout=6.0)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_version() -> str:
+    """Resolve the package version string.
+
+    Returns:
+        The version string from :func:`importlib.metadata.version`, or
+        ``"0.0.0+unknown"`` when the package is not installed.
+    """
+    try:
+        return importlib.metadata.version("para-notes-sorter")
+    except importlib.metadata.PackageNotFoundError:
+        return "0.0.0+unknown"
