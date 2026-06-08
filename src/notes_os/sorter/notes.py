@@ -46,6 +46,16 @@ _FIELD_SEP: str = chr(31)
 _RECORD_SEP: str = chr(30)
 """ASCII Record Separator (RS, 0x1E) — separates consecutive records."""
 
+_OSASCRIPT_TIMEOUT_SECONDS: float = 30.0
+"""Hard ceiling for any single ``osascript`` call.
+
+Without a timeout a stuck Apple Event — most commonly the first run blocking on
+the macOS "control Notes" Automation permission prompt, which can be hidden
+behind a full-screen TUI — would block the calling thread (and therefore the
+app's shutdown) indefinitely.  On timeout the call is abandoned and surfaced as
+a :class:`~notes_os.exceptions.NotesError` so callers degrade gracefully.
+"""
+
 # Compiled pattern for collapsing runs of whitespace (used by _strip_html).
 _WS_RE: re.Pattern[str] = re.compile(r"\s+")
 
@@ -256,16 +266,30 @@ class AppleScriptNotesRepository:
             The captured stdout of the subprocess on success (may be empty).
 
         Raises:
-            NotesError: If the subprocess exits with a non-zero return code.
-                The error message contains the stderr output from osascript, or
-                ``"osascript failed"`` when stderr is empty.
+            NotesError: If the subprocess exits with a non-zero return code
+                (message contains osascript's stderr, or ``"osascript failed"``
+                when stderr is empty), or if it does not return within
+                ``_OSASCRIPT_TIMEOUT_SECONDS`` (e.g. blocked on the macOS
+                Automation permission prompt).
         """
-        result = subprocess.run(  # noqa: S603  # fixed trusted macOS binary, list args, no shell=True
-            ["osascript", "-e", script],  # noqa: S607  # osascript is a fixed macOS system binary at /usr/bin/osascript
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(  # noqa: S603  # fixed trusted macOS binary, list args, no shell=True
+                ["osascript", "-e", script],  # noqa: S607  # osascript is a fixed macOS system binary at /usr/bin/osascript
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_OSASCRIPT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            msg = (
+                f"osascript timed out after {_OSASCRIPT_TIMEOUT_SECONDS:.0f}s — "
+                "Apple Notes may be waiting on an Automation permission prompt. "
+                "Grant access in System Settings > Privacy & Security > Automation, "
+                "or run `osascript -e 'tell application \"Notes\" to count notes'` "
+                "once and click Allow."
+            )
+            logger.warning(msg)
+            raise NotesError(msg) from exc
         if result.returncode != 0:
             logger.warning(
                 "osascript exited %d: %s",

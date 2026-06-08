@@ -9,6 +9,7 @@ All subprocess.run calls are patched — no osascript process ever spawns.
 
 from __future__ import annotations
 
+import subprocess
 import types
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -262,6 +263,18 @@ class TestGetInboxNotes:
                 ),
             ),
             pytest.raises(NotesError, match="Not authorized"),
+        ):
+            repo.get_inbox_notes()
+
+    def test_osascript_timeout_raises_notes_error(self) -> None:
+        """A hung osascript (TimeoutExpired) is surfaced as NotesError, not a hang."""
+        repo = _default_repo()
+        with (
+            patch(
+                "notes_os.sorter.notes.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["osascript"], timeout=30.0),
+            ),
+            pytest.raises(NotesError, match="timed out"),
         ):
             repo.get_inbox_notes()
 
