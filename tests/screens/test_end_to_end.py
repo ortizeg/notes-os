@@ -7,8 +7,8 @@ for task-bearing notes (SC3), and the session summary + audit log are written at
 finish (T-06-13 mitigation).
 
 One single test performs the entire walk:
-  1. HomeScreen mounts → inbox count == 2 (SC1 spot-check).
-  2. Activate "Sort Inbox" → SortScreen appears.
+  1. HomeScreen mounts → wait for _load_status thread worker → inbox count == 2 (SC1).
+  2. Activate "Sort Inbox" → SortScreen appears → wait for _load_inbox thread worker.
   3. Route note 1 (task-rich preview) to Archive via 'x' → backup fires, move recorded.
   4. TaskExtractScreen appears for note 1 → press 'a' (Add all) → daily .md written (SC3).
   5. SortScreen advances to note 2 (plain note, no tasks).
@@ -164,6 +164,11 @@ async def test_end_to_end_home_sort_extract_finish(tmp_path: Path) -> None:
     the macOS same-second rename collision between rapid backup calls during
     the test walk; the spy still proves SC2 by recording every create() call.
 
+    Thread-worker timing: HomeScreen._load_status and SortScreen._load_inbox are
+    both ``@work(thread=True)`` workers.  Each is awaited via
+    ``app.workers.wait_for_complete()`` followed by ``pilot.pause()`` before the
+    first assertion or keystroke that depends on their results.
+
     Args:
         tmp_path: pytest temporary directory (unique per test run).
     """
@@ -186,11 +191,16 @@ async def test_end_to_end_home_sort_extract_finish(tmp_path: Path) -> None:
         await pilot.pause()
 
         # ----------------------------------------------------------------
-        # Step 1: HomeScreen mounts — SC1 spot-check (inbox count == 2)
+        # Step 1: HomeScreen mounts — wait for _load_status worker, then
+        #         SC1 spot-check (inbox count == 2)
         # ----------------------------------------------------------------
         assert isinstance(app.screen, HomeScreen), (
             f"Expected HomeScreen at launch, got {type(app.screen).__name__}"
         )
+
+        # Wait for HomeScreen._load_status thread worker and flush UI updates.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
         inbox_widget = app.screen.query_one("#status-inbox", Static)
         inbox_text = str(inbox_widget.render())
@@ -200,8 +210,13 @@ async def test_end_to_end_home_sort_extract_finish(tmp_path: Path) -> None:
 
         # ----------------------------------------------------------------
         # Step 2: Activate "Sort Inbox" → SortScreen
+        #         Wait for _load_inbox worker before proceeding.
         # ----------------------------------------------------------------
         await app.screen.run_action("sort")
+        await pilot.pause()
+
+        # Wait for SortScreen._load_inbox thread worker and flush UI updates.
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert isinstance(app.screen, SortScreen), (

@@ -9,6 +9,13 @@ All assertions drive the TUI via Textual's ``App.run_test()`` async Pilot.
 No AppleScript is invoked.  The backup is proven via a ``MagicMock`` spy on
 ``BackupManager.create()`` so the assertion is deterministic and timing-safe.
 
+Note on worker timing: ``SortScreen.on_mount`` now starts a
+``@work(thread=True)`` worker (``_load_inbox``) to fetch the inbox snapshot
+off the event-loop thread.  Tests that push a SortScreen must wait for all
+workers to complete (``await app.workers.wait_for_complete()``) and then flush
+the resulting ``call_from_thread`` UI updates (``await pilot.pause()``) before
+sending keystrokes or asserting on screen state.
+
 Test coverage:
   SC2a: one note routed to Archive via 'x' — move recorded, inbox shrinks,
         session moved-count == 1, backup spy create() called before move.
@@ -181,6 +188,10 @@ async def test_sc2_archive_move_backup_fired(tui_config: SorterConfig) -> None:
         await app.push_screen(screen)
         await pilot.pause()
 
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
         assert isinstance(app.screen, SortScreen), (
             f"Expected SortScreen on top, got {type(app.screen)}"
         )
@@ -249,6 +260,10 @@ async def test_sc2_projects_folder_drill(tui_config: SorterConfig) -> None:
         await app.push_screen(screen)
         await pilot.pause()
 
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
         # Press 'p' → should enter AWAIT_FOLDER state
         await pilot.press("p")
         await pilot.pause()
@@ -309,6 +324,10 @@ async def test_sc2_esc_at_await_folder_backs_to_category(
         await app.push_screen(screen)
         await pilot.pause()
 
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
         # Press 'p' → AWAIT_FOLDER
         await pilot.press("p")
         await pilot.pause()
@@ -347,7 +366,8 @@ async def test_sc2_home_sort_pushes_sort_screen(tui_config: SorterConfig) -> Non
     1. Build app with tui_config + empty inbox (no moves to make).
     2. Wait for HomeScreen to mount.
     3. Activate 'Sort Inbox' via action_sort().
-    4. Assert SortScreen is now on top of the screen stack.
+    4. Wait for SortScreen._load_inbox worker to complete.
+    5. Assert SortScreen is now on top of the screen stack.
 
     Args:
         tui_config: SorterConfig fixture.
@@ -368,6 +388,10 @@ async def test_sc2_home_sort_pushes_sort_screen(tui_config: SorterConfig) -> Non
         await app.screen.run_action("sort")
         await pilot.pause()
 
+        # Wait for _load_inbox thread worker on the newly pushed SortScreen.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
         assert isinstance(app.screen, SortScreen), (
             f"Expected SortScreen after action_sort, got {type(app.screen).__name__}"
         )
@@ -383,8 +407,9 @@ async def test_sc2_skip_increments_session(tui_config: SorterConfig) -> None:
 
     Steps:
     1. Push SortScreen with one note.
-    2. Press 's' (skip).
-    3. Assert: no moves on inner repo; session.skipped == 1; session.moved == 0.
+    2. Wait for inbox to load (thread worker).
+    3. Press 's' (skip).
+    4. Assert: no moves on inner repo; session.skipped == 1; session.moved == 0.
 
     Args:
         tui_config: SorterConfig fixture.
@@ -402,6 +427,10 @@ async def test_sc2_skip_increments_session(tui_config: SorterConfig) -> None:
 
         screen = SortScreen()
         await app.push_screen(screen)
+        await pilot.pause()
+
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         # Press 's' — skip

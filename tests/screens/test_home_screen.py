@@ -8,6 +8,13 @@ Note on querying: Textual widgets live on the active *screen* in the stack, not
 directly on the App.  All ``query_one`` calls use ``app.screen.query_one(...)``
 to correctly target the pushed HomeScreen.
 
+Note on worker timing: ``HomeScreen.on_mount`` now kicks off a
+``@work(thread=True)`` worker (``_load_status``) to fetch inbox count and last-
+backup timestamp off the event-loop thread.  Each test that asserts on those
+status widgets must wait for all workers to complete (``await
+app.workers.wait_for_complete()``) and then flush the resulting
+``call_from_thread`` UI updates (``await pilot.pause()``) before querying.
+
 Test coverage:
   - SC1a: inbox count matches seeded note count (2 notes → "2")
   - SC1b: backend label contains "sort-only" — NOT "ollama"/"apple"/LLM
@@ -58,6 +65,11 @@ async def test_home_screen_status_no_backups(
         await pilot.pause()
 
         assert isinstance(app.screen, HomeScreen)
+
+        # Wait for the _load_status thread worker to complete, then flush the
+        # call_from_thread UI updates back to the main thread.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
         # Textual pushes HomeScreen on top of the base screen; widgets live on
         # the active screen, so we query from app.screen (HomeScreen), not app.
@@ -118,6 +130,10 @@ async def test_home_screen_status_with_backup(
     async with app.run_test() as pilot:
         await pilot.pause()
 
+        # Wait for the _load_status thread worker, then flush UI updates.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
         backup_widget = app.screen.query_one("#status-backup", Static)
         backup_text = str(backup_widget.render())
 
@@ -142,7 +158,8 @@ async def test_home_screen_splash_version(
 
     SC1e: the version Static (``#version-label``) contains a version-like
     string (either resolved via importlib.metadata or the fallback
-    "0.0.0+unknown").
+    "0.0.0+unknown").  This widget is set synchronously in ``compose`` so no
+    worker wait is needed.
 
     Args:
         tui_config: SorterConfig fixture.
@@ -174,7 +191,8 @@ async def test_home_screen_menu_items(
     """HomeScreen menu contains 'Sort Inbox' and 'Quit' options.
 
     SC1f: the OptionList (id ``#menu``) has exactly two options with the
-    expected IDs and visible text.
+    expected IDs and visible text.  This widget is set synchronously in
+    ``compose`` so no worker wait is needed.
 
     Args:
         tui_config: SorterConfig fixture.

@@ -11,15 +11,17 @@ TUI mounts.  It displays:
    with two items — "Sort Inbox" and "Quit".  Supports ↑/↓ to move the
    highlight and Enter to activate (TUI-05 nav base).
 
-3. **Status panel** (``#status``): Three live indicators computed in
-   ``on_mount`` from the injected dependencies:
+3. **Status panel** (``#status``): Three live indicators.  ``on_mount`` sets
+   placeholder text immediately and kicks off a background thread worker
+   (``_load_status``) to fetch real values without blocking the event loop:
 
    - *Inbox* — ``len(self.app.repo.get_inbox_notes())`` notes waiting.
    - *Last backup* — newest from ``self.app.backup_manager.list()``.  Shows
      ``"never"`` when no backups exist; otherwise formats
      ``backup.timestamp.strftime("%Y-%m-%d %H:%M:%S")``.
    - *Backend* — the HONEST M1 label ``"sort-only (M1)"``; NO fabricated LLM
-     backend (T-06-02 mitigation).
+     backend (T-06-02 mitigation).  Set synchronously in ``on_mount`` (no I/O
+     needed).
 
 Navigation bindings on HomeScreen (TUI-05):
     - ``?`` → contextual help overlay (``action_help`` — overrides the global
@@ -34,6 +36,7 @@ import importlib.metadata
 import logging
 from typing import TYPE_CHECKING, ClassVar
 
+from textual import work
 from textual.binding import Binding, BindingType
 from textual.screen import Screen
 from textual.widgets import Footer, Header, OptionList, Static
@@ -79,6 +82,10 @@ class HomeScreen(Screen[None]):
     ``self.app.backup_manager`` so injected test doubles drive the values
     deterministically without any AppleScript (SC1 provable via Pilot tests).
 
+    ``on_mount`` sets placeholder text immediately and delegates all blocking
+    I/O to :meth:`_load_status` (a ``@work(thread=True)`` worker) so Textual
+    can paint the screen before the first ``osascript`` call completes.
+
     Bindings declared here are SCREEN-LOCAL and supplement the global Q/? bindings
     declared on :class:`~notes_os.app.NotesOSApp`.
     """
@@ -111,8 +118,8 @@ class HomeScreen(Screen[None]):
             id="menu",
         )
 
-        yield Static("Inbox: —", id="status-inbox")
-        yield Static("Last backup: —", id="status-backup")
+        yield Static("Inbox: loading…", id="status-inbox")
+        yield Static("Last backup: loading…", id="status-backup")
         yield Static("Backend: sort-only (M1)", id="status-backend")
 
         yield Footer()
@@ -122,11 +129,30 @@ class HomeScreen(Screen[None]):
     # ------------------------------------------------------------------
 
     def on_mount(self) -> None:
-        """Populate live status indicators after the screen mounts.
+        """Set placeholder status text and kick off the background status loader.
 
-        Reads inbox count, last-backup timestamp, and backend label from the
-        injected dependencies (available via ``self.app``) and updates the
-        corresponding :class:`~textual.widgets.Static` widgets.
+        The backend label needs no I/O and is set synchronously.  Inbox count
+        and last-backup timestamp are fetched off the event-loop thread by
+        :meth:`_load_status` so Textual can paint the screen immediately.
+        """
+        # Backend label — honest M1 string; NOT fabricated LLM backend (T-06-02)
+        self.query_one("#status-backend", Static).update("Backend: sort-only (M1)")
+
+        # Kick off non-blocking background worker for I/O-bound status fields.
+        self._load_status()
+
+    @work(thread=True, exclusive=True)
+    def _load_status(self) -> None:
+        """Fetch inbox count and last-backup timestamp off the event-loop thread.
+
+        Runs in a background thread so the blocking ``osascript`` subprocess
+        (inside ``get_inbox_notes()``) does not stall Textual's event loop
+        before first paint.  Each result is marshalled back to the main thread
+        via ``self.app.call_from_thread`` before updating the widgets.
+
+        Preserves the same fallback strings as the previous synchronous
+        implementation (``"Inbox: (unavailable)"`` and
+        ``"Last backup: (unavailable)"`` / ``"Last backup: never"``).
         """
         app: NotesOSApp = self.app  # type: ignore[assignment]
 
@@ -135,27 +161,34 @@ class HomeScreen(Screen[None]):
         try:
             notes = app.repo.get_inbox_notes()
             inbox_count = len(notes)
-            self.query_one("#status-inbox", Static).update(f"Inbox: {inbox_count} note(s)")
+            inbox_text = f"Inbox: {inbox_count} note(s)"
         except Exception:
             logger.warning("HomeScreen: failed to fetch inbox count", exc_info=True)
-            self.query_one("#status-inbox", Static).update("Inbox: (unavailable)")
+            inbox_text = "Inbox: (unavailable)"
+
+        self.app.call_from_thread(
+            self.query_one("#status-inbox", Static).update,
+            inbox_text,
+        )
 
         # Last backup
         try:
             backups = app.backup_manager.list()
             if backups:
                 ts_str = backups[0].timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                self.query_one("#status-backup", Static).update(f"Last backup: {ts_str}")
+                backup_text = f"Last backup: {ts_str}"
             else:
-                self.query_one("#status-backup", Static).update("Last backup: never")
+                backup_text = "Last backup: never"
         except Exception:
             logger.warning("HomeScreen: failed to fetch backup list", exc_info=True)
-            self.query_one("#status-backup", Static).update("Last backup: (unavailable)")
+            backup_text = "Last backup: (unavailable)"
 
-        # Backend label — honest M1 string; NOT fabricated LLM backend (T-06-02)
-        self.query_one("#status-backend", Static).update("Backend: sort-only (M1)")
+        self.app.call_from_thread(
+            self.query_one("#status-backup", Static).update,
+            backup_text,
+        )
 
-        logger.debug("HomeScreen mounted — inbox_count=%d", inbox_count)
+        logger.debug("HomeScreen _load_status complete — inbox_count=%d", inbox_count)
 
     # ------------------------------------------------------------------
     # Message handlers

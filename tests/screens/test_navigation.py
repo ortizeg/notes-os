@@ -3,6 +3,13 @@
 Proves SC4: the navigation convention (Esc/B back one level, Q quit / quit-confirm,
 ? contextual help) is consistent across HomeScreen, SortScreen, and TaskExtractScreen.
 
+Note on worker timing: ``SortScreen.on_mount`` starts a ``@work(thread=True)``
+worker (``_load_inbox``) to fetch the inbox snapshot off the event-loop thread.
+Tests that push a SortScreen must call ``await app.workers.wait_for_complete()``
+followed by ``await pilot.pause()`` before sending keystrokes or asserting on
+SortScreen state.  ``HomeScreen`` also runs a ``_load_status`` thread worker;
+tests that assert on its status widgets must likewise wait.
+
 Test coverage:
   SC4a: Esc at AWAIT_FOLDER backs to AWAIT_CATEGORY (already in SC2c; duplicated here
         as explicit SC4 citation so test_navigation.py is the canonical SC4 suite).
@@ -161,6 +168,10 @@ async def test_sc4a_esc_at_await_folder_backs_to_category(
         await app.push_screen(screen)
         await pilot.pause()
 
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
         await pilot.press("p")
         await pilot.pause()
 
@@ -202,6 +213,10 @@ async def test_sc4b_b_at_category_returns_to_home(
 
         screen = SortScreen()
         await app.push_screen(screen)
+        await pilot.pause()
+
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert isinstance(app.screen, SortScreen)
@@ -283,6 +298,10 @@ async def test_sc4d_q_during_session_confirm_then_quit(
 
         screen = SortScreen()
         await app.push_screen(screen)
+        await pilot.pause()
+
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         # Skip first note — sets sort_in_progress=True
@@ -382,6 +401,10 @@ async def test_sc4f_help_on_sort_screen(tui_config: SorterConfig) -> None:
 
         screen = SortScreen()
         await app.push_screen(screen)
+        await pilot.pause()
+
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert isinstance(app.screen, SortScreen)
@@ -501,6 +524,10 @@ async def test_sc4i_esc_at_category_returns_to_home(
 
         screen = SortScreen()
         await app.push_screen(screen)
+        await pilot.pause()
+
+        # Wait for _load_inbox thread worker, then flush call_from_thread UI updates.
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert isinstance(app.screen, SortScreen)

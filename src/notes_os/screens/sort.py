@@ -18,10 +18,12 @@ transitions as discrete, non-blocking event handlers.
 State the screen holds (mirrors SortController call-stack context):
 - ``_router`` — the stateless PARA state machine; stateless between calls.
 - ``_session`` — accumulates moves/skips/errors for this screen visit.
-- ``_notes`` — snapshot of the inbox taken at ``on_mount``.
+- ``_notes`` — snapshot of the inbox taken in ``_load_inbox`` (thread worker).
 - ``_index`` — pointer into ``_notes``; advances after each note is done.
 - ``_router_state`` — current state-machine state (AWAIT_CATEGORY etc.).
 - ``_prev`` — last ``RouteResult`` carrying folder/subfolder context.
+- ``_loading`` — ``True`` while the inbox snapshot is being fetched off-thread;
+  ``on_key`` is a safe no-op while this flag is set.
 
 TUI-05 navigation (consistent with HomeScreen):
 - Global: Q quit (on NotesOSApp), ? help (dispatches to action_help here).
@@ -35,8 +37,9 @@ Threat mitigations:
   ``try/except NotesOSError`` → ``record_error`` + advance (mirrors T-04-10).
 - T-06-06 (invalid keystroke causing bad state): Router returns no-op
   RouteResult for unknown keys / out-of-range indices; screen re-renders only.
-- T-06-07 (blocking event loop): SortController.run() is never called here;
-  Router transitions are discrete async event handlers.
+- T-06-07 (blocking event loop): ``get_inbox_notes()`` is called in
+  ``_load_inbox`` (a ``@work(thread=True)`` worker) off the event-loop thread;
+  ``on_key`` is guarded by ``_loading`` until the worker completes.
 - T-06-08 (extraction running when disabled): ``_after_move`` first line
   returns ``False`` immediately when ``task_extraction`` is ``False``; the
   disabled path never imports TaskExtractScreen or TaskWriter.
@@ -57,6 +60,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, ClassVar
 
+from textual import work
 from textual.binding import Binding, BindingType
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
@@ -105,6 +109,11 @@ class SortScreen(Screen[None]):
     any blocking loop — each key event is handled discretely and returns
     immediately so the Textual event loop stays responsive.
 
+    ``on_mount`` sets a transient "Loading inbox…" state immediately, then
+    starts :meth:`_load_inbox` (a ``@work(thread=True)`` worker) to fetch
+    the inbox snapshot off the event-loop thread.  ``on_key`` is guarded by
+    ``_loading`` and is a safe no-op while the worker is running.
+
     All live data comes from ``self.app.repo`` (the backup-wrapped repository
     from the NotesOSApp DI seam) and ``self.app.app_config``.
 
@@ -129,8 +138,9 @@ class SortScreen(Screen[None]):
         """Initialise SortScreen instance attributes.
 
         Router, session, notes snapshot, and navigation state are all
-        initialised here as sentinel values and populated in ``on_mount``
-        after the app is attached and ``self.app.repo`` is available.
+        initialised here as sentinel values and populated in ``_load_inbox``
+        (the background thread worker started by ``on_mount``) after the app
+        is attached and ``self.app.repo`` is available.
 
         Args:
             year_provider: Optional fixed-year lambda for tests.
@@ -147,6 +157,7 @@ class SortScreen(Screen[None]):
         self._router_state: RouterState = RouterState.AWAIT_CATEGORY
         self._prev: RouteResult | None = None
         self._inbox_empty: bool = False
+        self._loading: bool = True  # True until _load_inbox worker completes
 
     def compose(self) -> ComposeResult:
         """Lay out the sort-screen widgets.
@@ -166,11 +177,12 @@ class SortScreen(Screen[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Build Router + Session, snapshot inbox, render first note.
+        """Render a transient loading state and kick off inbox loading off-thread.
 
-        Accesses ``self.app.repo`` and ``self.app.app_config`` (always
-        present via the NotesOSApp DI seam from 06-01).  If the inbox is
-        empty, renders the empty-inbox state and returns early.
+        Router and SortSession are initialised synchronously (cheap, no I/O).
+        ``get_inbox_notes()`` — the blocking ``osascript`` subprocess — is
+        deferred to :meth:`_load_inbox` (a ``@work(thread=True)`` worker) so
+        Textual can paint the screen before any AppleScript call completes.
         """
         app: NotesOSApp = self.app  # type: ignore[assignment]
 
@@ -180,10 +192,48 @@ class SortScreen(Screen[None]):
             year_provider=self._year_provider,
         )
         self._session = SortSession()
-        self._notes = app.repo.get_inbox_notes()
+
+        # Show a transient loading state while the inbox is fetched off-thread.
+        self.query_one("#note-title", Static).update("Loading inbox…")
+        self.query_one("#note-preview", Static).update("")
+        self.query_one("#prompt", Static).update("")
+        self.query_one("#progress", Static).update("")
+
+        # Start the background worker; on_key is guarded by _loading=True.
+        self._load_inbox()
+
+    @work(thread=True, exclusive=True)
+    def _load_inbox(self) -> None:
+        """Fetch the inbox snapshot off the event-loop thread.
+
+        Calls ``app.repo.get_inbox_notes()`` in a background thread so the
+        blocking ``osascript`` subprocess does not stall Textual's event loop.
+        Once the snapshot is available, marshals state back to the main thread
+        via ``self.app.call_from_thread`` and renders the first note (or the
+        empty-inbox state).
+
+        ``_loading`` is reset to ``False`` inside ``call_from_thread`` so
+        ``on_key`` only becomes active after the inbox state is fully applied.
+        """
+        app: NotesOSApp = self.app  # type: ignore[assignment]
+        notes = app.repo.get_inbox_notes()
+        self.app.call_from_thread(self._apply_inbox, notes)
+
+    def _apply_inbox(self, notes: list[Note]) -> None:
+        """Apply the inbox snapshot fetched by the thread worker.
+
+        Called on the main thread via ``call_from_thread``.  Sets all
+        navigation state fields and renders the first note or the empty-inbox
+        state, then clears ``_loading`` to enable ``on_key``.
+
+        Args:
+            notes: The inbox snapshot returned by ``get_inbox_notes()``.
+        """
+        self._notes = notes
         self._index = 0
         self._router_state = RouterState.AWAIT_CATEGORY
         self._prev = None
+        self._loading = False
 
         if not self._notes:
             self._inbox_empty = True
@@ -195,7 +245,8 @@ class SortScreen(Screen[None]):
     def on_key(self, event: events.Key) -> None:
         """Translate Textual key events into Router transitions.
 
-        Dispatches based on the current ``_router_state``:
+        No-ops silently while ``_loading`` is ``True`` (inbox not yet fetched).
+        Dispatches based on the current ``_router_state`` once loaded:
         - ``AWAIT_CATEGORY``: category keys (P/A/R/X/S/?), or Esc/B back.
         - ``AWAIT_FOLDER``: numeric keys 1-9, or Esc/B back.
         - ``AWAIT_SUBFOLDER``: numeric keys 1-9, or Esc/B back.
@@ -206,6 +257,9 @@ class SortScreen(Screen[None]):
         Args:
             event: The Textual :class:`~textual.events.Key` event.
         """
+        if self._loading:
+            return
+
         if self._inbox_empty:
             if event.key in ("escape", "b"):
                 self.app.pop_screen()
@@ -366,6 +420,13 @@ class SortScreen(Screen[None]):
         ``_advance`` is called immediately here.
 
         When an error occurs, advance is always immediate (no modal on error).
+
+        Per-move operations (``router.handle_*`` → ``ensure_folder`` /
+        ``move_note`` / backup) block the event loop for ~1 s each on the real
+        AppleScript backend.  This is acceptable in M1 — a brief per-move pause
+        is visible but the app remains correct and the UX is usable.  Making
+        these async/threaded is left as future work (would require refactoring
+        the Router and BackingUpNotesRepository interfaces).
 
         Args:
             note: The note that was just moved.
