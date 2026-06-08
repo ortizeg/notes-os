@@ -80,11 +80,18 @@ class FeaturesConfig(BaseModel):
         task_extraction: When ``True``, the sort session attempts to extract
             action items from note bodies and surface them during review.
             Defaults to ``False`` (Phase 5 opt-in; off in M1).
+        extracted_tasks_dir: Directory where the daily Markdown task files are
+            written when ``task_extraction`` is enabled.  One file per day,
+            named ``YYYY-MM-DD.md``, under this directory.  Created on first
+            write if absent.  Defaults to ``~/.notes-os/extracted-tasks``.
     """
 
     model_config = ConfigDict(frozen=True)
 
     task_extraction: bool = False
+    extracted_tasks_dir: Path = Field(
+        default_factory=lambda: Path.home() / ".notes-os" / "extracted-tasks"
+    )
 
 
 class SorterConfig(BaseModel):

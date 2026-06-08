@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Completed 04-sorting-core 04-05-PLAN.md
-last_updated: "2026-06-07T22:31:38.990Z"
-last_activity: 2026-06-07 -- Phase 04 plan 04 executed; SESS-01/02/03 complete; SortSession + SessionSummary + write_log; 243 unit tests, 99.52% coverage
+stopped_at: Completed 05-task-extraction 05-01-PLAN.md
+last_updated: "2026-06-07T23:00:48.750Z"
+last_activity: 2026-06-07 -- Phase 05 plan 01 executed; TASK-01 extractor.py pure heuristic scanner; ExtractedTask frozen Pydantic V2 model; 25 tests 100% coverage; 274 total tests 95.08% overall coverage
 progress:
   total_phases: 6
-  completed_phases: 4
-  total_plans: 13
-  completed_plans: 13
-  percent: 67
+  completed_phases: 5
+  total_plans: 15
+  completed_plans: 15
+  percent: 83
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-07)
 
 ## Current Position
 
-Phase: 04 (Sorting Core) — In Progress (4/5 plans complete)
-Plan: 5 of 5 complete
-Status: Phase 4 plan 04 done — SortSession + frozen SessionSummary + write_log; 243 tests, 99.52% cov; 1 plan remaining (04-05 controller)
-Last activity: 2026-06-07 -- Phase 04 plan 04 executed; SESS-01/02/03 complete; SortSession + SessionSummary + write_log; 243 unit tests, 99.52% coverage
+Phase: 05 (Task Extraction) — In Progress (1/2 plans complete)
+Plan: 2 of 2 complete
+Status: Phase 5 plan 01 done — pure heuristic extract_tasks + frozen ExtractedTask; 3-family LOCKED regexes; 100% extractor coverage; 274 tests overall 95.08%; 1 plan remaining (05-02 extraction UI)
+Last activity: 2026-06-07 -- Phase 05 plan 01 executed; TASK-01 extractor.py pure heuristic scanner; ExtractedTask frozen Pydantic V2 model; 25 tests 100% coverage; 274 total tests 95.08% overall coverage
 
 Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 
@@ -64,6 +64,8 @@ Progress: [████░░░░░░] 50% (3 of 6 phases complete)
 | Phase 04-sorting-core P03 | 218 | 2 tasks | 3 files |
 | Phase 04-sorting-core P04 | ~8 min | 2 tasks (TDD) | 3 files |
 | Phase 04-sorting-core P05 | 371 | 2 tasks | 3 files |
+| Phase 05-task-extraction P01 | 135 | 3 tasks | 3 files |
+| Phase 05-task-extraction P02 | 7m | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -108,6 +110,10 @@ Recent decisions affecting current work:
 - [Phase 04-sorting-core]: SessionSummary.total is a @property (moved+skipped+errors) — not stored; stays correct without a second mutation surface
 - [Phase 04-sorting-core]: notes_os.sorter.session added to pyproject.toml mypy disallow_any_explicit=false override (SessionSummary inherits BaseModel Any API)
 - [Phase ?]: SortController fully DI; build_default_controller wraps AppleScriptNotesRepository in BackingUpNotesRepository (SC4 backup-then-move)
+- [Phase 05-task-extraction]: extract_tasks splits on [.\n!?]+ into short fragments before regex matching — prevents ReDoS on adversarial note bodies (T-05-01 mitigation)
+- [Phase 05-task-extraction]: ExtractedTask has single text: str field — minimal model; downstream UI/writer adds metadata in 05-02 if needed (YAGNI)
+- [Phase 05-task-extraction]: extract_tasks returns [] on empty/whitespace input — no exception raised; extractor has no failure modes in plan 01
+- [Phase 05-task-extraction]: notes_os.sorter.extractor appended to mypy disallow_any_explicit=false override (7th entry); ExtractedTask(BaseModel) inherits Pydantic Any API
 
 ### Pending Todos
 
@@ -120,6 +126,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-07T22:31:38.986Z
-Stopped at: Completed 04-sorting-core 04-05-PLAN.md
+Last session: 2026-06-07T23:00:48.746Z
+Stopped at: Completed 05-task-extraction 05-01-PLAN.md
 Resume file: None

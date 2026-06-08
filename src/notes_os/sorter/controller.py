@@ -35,7 +35,10 @@ from notes_os.sorter.session import SortSession
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from notes_os.config import SorterConfig
+    from notes_os.sorter.extractor import ExtractedTask, TaskWriter
     from notes_os.sorter.models import Note
     from notes_os.sorter.notes import NotesRepositoryProtocol
     from notes_os.sorter.router import Router
@@ -83,23 +86,40 @@ class SortController:
         session: SortSession,
         router: Router,
         config: SorterConfig,
+        extractor: Callable[[str], list[ExtractedTask]] | None = None,
+        writer: TaskWriter | None = None,
     ) -> None:
         """Initialise the controller with its injected dependencies.
 
+        The *extractor* and *writer* parameters are optional.  When both are
+        ``None`` (the default), the extraction path is completely inactive
+        regardless of ``config.features.task_extraction`` — this preserves
+        byte-identical Phase-4 behaviour for all existing call sites that
+        pass nothing (SC1 backward-compat).
+
         Args:
-            repo:    :class:`~notes_os.sorter.notes.NotesRepositoryProtocol`
-                     implementation (real or mock) for inbox / write ops.
-            ui:      :class:`~notes_os.sorter.ui.SortUIProtocol` implementation
-                     for rendering and input.
-            session: :class:`~notes_os.sorter.session.SortSession` accumulator.
-            router:  :class:`~notes_os.sorter.router.Router` for state transitions.
-            config:  :class:`~notes_os.config.SorterConfig` for ``log_dir``.
+            repo:      :class:`~notes_os.sorter.notes.NotesRepositoryProtocol`
+                       implementation (real or mock) for inbox / write ops.
+            ui:        :class:`~notes_os.sorter.ui.SortUIProtocol` implementation
+                       for rendering and input.
+            session:   :class:`~notes_os.sorter.session.SortSession` accumulator.
+            router:    :class:`~notes_os.sorter.router.Router` for state transitions.
+            config:    :class:`~notes_os.config.SorterConfig` for ``log_dir`` and
+                       feature flags.
+            extractor: Optional callable ``(str) -> list[ExtractedTask]`` that
+                       scans a note's preview text for action items.  Defaults to
+                       ``None`` (extraction disabled for this session).
+            writer:    Optional :class:`~notes_os.sorter.extractor.TaskWriter` that
+                       persists selected tasks to the daily Markdown file.
+                       Defaults to ``None`` (no writes).
         """
         self._repo = repo
         self._ui = ui
         self._session = session
         self._router = router
         self._config = config
+        self._extractor = extractor
+        self._writer = writer
 
     # ------------------------------------------------------------------
     # Public API
@@ -159,9 +179,56 @@ class SortController:
             if result.action == RouteAction.MOVE and result.folder_path is not None:
                 self._session.record_move(note.id, result.folder_path)
                 logger.debug("Note %r moved to %s", note.id, result.display_path)
+                self._maybe_extract_tasks(note)
         except NotesOSError as exc:
             self._session.record_error(note.id, str(exc))
             logger.warning("Error sorting note %r: %s", note.id, exc)
+
+    def _maybe_extract_tasks(self, note: Note) -> None:
+        """Attempt task extraction after a successful move when enabled.
+
+        SC1 short-circuit: returns IMMEDIATELY if
+        ``config.features.task_extraction`` is ``False`` (the default).  This
+        is the very first check — no extractor, UI, or writer access occurs on
+        the disabled path, preserving byte-identical Phase-4 behaviour.
+
+        Also returns immediately when ``_extractor`` or ``_writer`` is ``None``
+        (i.e. the controller was constructed without injection — e.g. older
+        call sites from Phase 4 tests).
+
+        On the enabled path:
+
+        1. Calls ``_extractor(note.preview)`` to scan for action items.
+        2. If tasks found, calls ``ui.prompt_task_selection(tasks)`` for the
+           user to choose which to keep.
+        3. If the user selected any tasks, calls ``_writer.write(selected)``
+           to append them to the daily Markdown file.
+
+        Args:
+            note: The :class:`~notes_os.sorter.models.Note` that was just moved.
+        """
+        # SC1 gate — must be the first line; no other references before this
+        if not self._config.features.task_extraction:
+            return
+        if self._extractor is None or self._writer is None:
+            return
+
+        text = note.preview
+        tasks = self._extractor(text)
+        if not tasks:
+            logger.debug("_maybe_extract_tasks: no tasks found in note %r", note.id)
+            return
+
+        selected = self._ui.prompt_task_selection(tasks)
+        if selected:
+            self._writer.write(selected)
+            logger.info(
+                "_maybe_extract_tasks: wrote %d task(s) for note %r",
+                len(selected),
+                note.id,
+            )
+        else:
+            logger.debug("_maybe_extract_tasks: user skipped tasks for note %r", note.id)
 
     def _await_category(self, note: Note) -> RouteResult:
         """Loop at AWAIT_CATEGORY until the router issues MOVE or SKIP.
@@ -322,6 +389,7 @@ def build_default_controller(config: SorterConfig) -> SortController:
         A fully wired :class:`SortController` ready for ``.run()``.
     """
     from notes_os.backup import BackingUpNotesRepository, BackupManager
+    from notes_os.sorter.extractor import TaskWriter, extract_tasks
     from notes_os.sorter.notes import AppleScriptNotesRepository
     from notes_os.sorter.router import Router
     from notes_os.sorter.ui import RichSortUI
@@ -333,6 +401,7 @@ def build_default_controller(config: SorterConfig) -> SortController:
     router = Router(repo=repo, config=config)
     ui = RichSortUI()
     session = SortSession()
+    writer = TaskWriter(config.features.extracted_tasks_dir)
 
     logger.info(
         "Production controller built — backup dir: %s, log dir: %s",
@@ -345,4 +414,6 @@ def build_default_controller(config: SorterConfig) -> SortController:
         session=session,
         router=router,
         config=config,
+        extractor=extract_tasks,
+        writer=writer,
     )
