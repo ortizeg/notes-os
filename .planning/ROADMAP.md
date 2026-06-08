@@ -155,7 +155,7 @@ Plans:
 Plans:
 
 - [x] 06-01-PLAN.md — Textual app shell (NotesOSApp DI seam) + HomeScreen splash/menu/live status + async-test (pytest-asyncio) setup + nav base
-- [ ] 06-02-PLAN.md — SortScreen drives the UI-agnostic Router directly (event-driven, not the blocking controller) + Home→Sort wiring + SC2 Pilot test
+- [x] 06-02-PLAN.md — SortScreen drives the UI-agnostic Router directly (event-driven, not the blocking controller) + Home→Sort wiring + SC2 Pilot test
 - [ ] 06-03-PLAN.md — TaskExtractScreen (add-all/select/skip → TaskWriter) wired into SortScreen `_after_move`, gated on task_extraction + SC3 Pilot test
 - [ ] 06-04-PLAN.md — Harmonized TUI-05 nav (quit-confirm, contextual help) + comprehensive Pilot suite (SC4 + end-to-end) + optional integration smoke + ≥80% gate
 
@@ -173,4 +173,4 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Backup | 2/2 | Complete | 2026-06-07 |
 | 4. Sorting Core | 5/5 | Complete   | 2026-06-07 |
 | 5. Task Extraction | 2/2 | Complete   | 2026-06-07 |
-| 6. Textual TUI Integration | 1/4 | In Progress|  |
+| 6. Textual TUI Integration | 2/4 | In Progress|  |
