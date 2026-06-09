@@ -46,6 +46,7 @@ from notes_os.exceptions import BackupError, NotesMoveError
 from notes_os.screens.sort import (
     _BULK_PAGE_SIZE,
     _BULK_THRESHOLD,
+    _CATEGORY_PROMPT,
     _PREVIEW_SKELETON,
     _PREVIEW_SKELETON_CLASS,
     SortScreen,
@@ -1090,6 +1091,80 @@ async def test_skeleton_shown_until_body_lands(tui_config: SorterConfig) -> None
         loaded_text = str(preview.render())
         assert "preview 0" in loaded_text, loaded_text
         assert _PREVIEW_SKELETON not in loaded_text, loaded_text
+
+
+async def test_category_prompt_live_while_body_streams(tui_config: SorterConfig) -> None:
+    """UX-04: the action line is live from first paint while the body still streams.
+
+    Regression guard for UX-04: the ``#prompt`` category line must render the live
+    ``_CATEGORY_PROMPT`` the instant the note title shows — even while the body is
+    still loading and ``#note-preview`` shows the Phase-11 skeleton — and a category
+    keystroke (here ``'x'`` → Archive) must be honored without waiting for the body.
+
+    The body is withheld deterministically (the same cache-miss pattern as
+    ``test_skeleton_shown_until_body_lands``): ``get_inbox_note_bodies`` returns
+    ``[]`` so the bulk page never lands, and the by-id ``get_note`` fallback is
+    gated on an un-set ``threading.Event`` so the skeleton state is observable.
+    Workers are NOT drained before the assertions, so the body is provably still
+    streaming.
+
+    Pre-keystroke (gate held): ``#note-preview`` carries ``_PREVIEW_SKELETON_CLASS``
+    (body not loaded), ``#prompt`` renders ``_CATEGORY_PROMPT`` (live action line),
+    and the router is at ``AWAIT_CATEGORY``. Pressing ``'x'`` then records a move
+    (``summary().moved == 1``) — proving the category move was honored mid-stream.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    notes = [_make_archive_note("ux04-note-1")]
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, notes)
+
+    # Bulk page never arrives → the current note's body is withheld (cache miss).
+    mock_inner.get_inbox_note_bodies = lambda offset, count: []  # type: ignore[method-assign]
+
+    # Gate the single-note fallback so the body stays unloaded (skeleton observable)
+    # across the keystroke; the worker would otherwise drain during the pause.
+    gate = threading.Event()
+    real_get_note = mock_inner.get_note
+
+    def gated_get_note(note_id: str) -> Note:
+        gate.wait(timeout=5.0)
+        return real_get_note(note_id)
+
+    mock_inner.get_note = gated_get_note  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        # Do NOT wait_for_complete — the gated fallback is still in flight, so the
+        # body is still streaming and the skeleton must be showing.
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        preview = sort_screen.query_one("#note-preview", Static)
+        prompt = sort_screen.query_one("#prompt", Static)
+
+        # Body still streaming: the skeleton is on #note-preview …
+        assert preview.has_class(_PREVIEW_SKELETON_CLASS), (
+            "the #note-preview Static must carry the preview-loading class while loading"
+        )
+        # … but the action line is ALREADY live (UX-04 — never gated on body load).
+        prompt_text = str(prompt.render())
+        assert _CATEGORY_PROMPT in prompt_text, prompt_text
+        assert sort_screen._router_state is RouterState.AWAIT_CATEGORY
+
+        # A category keystroke is honored while the body still streams.
+        await pilot.press("x")
+        await pilot.pause()
+        assert sort_screen._session.summary().moved == 1, (
+            "a category move must be honored while the body is still loading"
+        )
+
+        # Release the gate so the gated worker can drain cleanly before teardown.
+        gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
 
 # ---------------------------------------------------------------------------

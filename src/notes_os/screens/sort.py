@@ -1203,6 +1203,12 @@ class SortScreen(Screen[None]):
             preview.add_class(_PREVIEW_SKELETON_CLASS)
             preview.update(_PREVIEW_SKELETON)
 
+        # UX-04 INVARIANT: the category prompt MUST render unconditionally here —
+        # OUTSIDE the `_current_note` body-cache branch above — so the action line
+        # is live from first paint and is never gated on body load (only
+        # `#note-preview` may show the skeleton; `#prompt` never does). Moving this
+        # under the body-cache branch would regress UX-04 (see
+        # test_category_prompt_live_while_body_streams).
         if self._router_state == RouterState.AWAIT_CATEGORY:
             self.query_one("#prompt", Static).update(_CATEGORY_PROMPT)
         elif self._router_state in (RouterState.AWAIT_FOLDER, RouterState.AWAIT_SUBFOLDER):
