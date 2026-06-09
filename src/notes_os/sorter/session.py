@@ -174,6 +174,44 @@ class SortSession:
         self._events.append(_NoteEvent(note_id, _OUTCOME_ERROR, message))
         logger.warning("Recorded error: %s — %s", note_id, message)
 
+    def record_move_failure(self, note_id: str, message: str) -> None:
+        """Reconcile an optimistically-counted move whose write later failed.
+
+        The TUI (Phase 13-02) records a move OPTIMISTICALLY — it increments
+        :attr:`moved` before the off-thread ``move_note`` write is known to
+        succeed.  When that write later fails the note physically stays in the
+        inbox, so the already-counted move must become an error (PERF-05).
+
+        Behaviour:
+
+        - If the most-recent ``MOVE`` event for *note_id* is found, it is
+          rewritten in place to an ``ERROR`` event carrying *message*,
+          :attr:`moved` is decremented (guarded so it never goes below zero),
+          and :attr:`errors` is incremented.  Net effect: the note is counted
+          exactly once, as an error.
+        - If NO prior move event exists for *note_id* (defensive), a fresh
+          ``ERROR`` event is appended and only :attr:`errors` is incremented —
+          :attr:`moved` is left untouched so it can never go negative.
+
+        Args:
+            note_id: The opaque note identifier whose optimistic move failed.
+            message: Human-readable failure description recorded on the event.
+        """
+        for event in reversed(self._events):
+            if event.note_id == note_id and event.outcome == _OUTCOME_MOVE:
+                event.outcome = _OUTCOME_ERROR
+                event.detail = message
+                if self.moved > 0:
+                    self.moved -= 1
+                self.errors += 1
+                logger.warning("Reclassified optimistic move as error: %s — %s", note_id, message)
+                return
+
+        # Defensive: no prior optimistic move for this id — record a fresh error.
+        self._events.append(_NoteEvent(note_id, _OUTCOME_ERROR, message))
+        self.errors += 1
+        logger.warning("Recorded move failure with no prior move: %s — %s", note_id, message)
+
     # ------------------------------------------------------------------
     # Summary + log (SESS-02 / SESS-03)
     # ------------------------------------------------------------------

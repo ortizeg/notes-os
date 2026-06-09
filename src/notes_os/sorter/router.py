@@ -44,7 +44,9 @@ Threat mitigations (ROUT-07, T-04-03, T-04-04)
 - ``FolderPath`` is resolved only from ``ParaStructure`` + configured archive
   base — no free-form folder creation from user input.
 - ``ensure_folder`` is always called **before** ``move_note`` so the target
-  exists when the move is issued.
+  exists when the move is issued (on the deferred-write path the router
+  performs neither; the caller owns the serialized off-thread write — see
+  SortScreen).
 """
 
 from __future__ import annotations
@@ -195,6 +197,12 @@ class Router:
         year_provider: Zero-argument callable that returns the current year as
                        an ``int``.  Defaults to ``lambda: datetime.now().year``.
                        Inject a fixed-year lambda in tests for determinism.
+        defer_writes:  When ``True``, :meth:`_do_move` resolves the MOVE result
+                       WITHOUT issuing ``ensure_folder`` / ``move_note`` — the
+                       caller (SortScreen) performs the write off-thread.  When
+                       ``False`` (the default) the router writes synchronously
+                       inside :meth:`_do_move`, which is what the CLI
+                       ``SortController`` relies on.
     """
 
     def __init__(
@@ -202,6 +210,8 @@ class Router:
         repo: NotesRepositoryProtocol,
         config: SorterConfig,
         year_provider: Callable[[], int] | None = None,
+        *,
+        defer_writes: bool = False,
     ) -> None:
         """Initialise the router.
 
@@ -211,12 +221,19 @@ class Router:
             year_provider: Callable returning the year for archive auto-year.
                            Defaults to the current calendar year from
                            ``datetime.datetime.now().year``.
+            defer_writes:  When ``True``, :meth:`_do_move` resolves the MOVE
+                           ``RouteResult`` WITHOUT issuing ``ensure_folder`` /
+                           ``move_note`` — the caller (SortScreen) performs the
+                           write off-thread.  When ``False`` (the default) the
+                           router writes synchronously inside :meth:`_do_move`,
+                           which is what the CLI ``SortController`` relies on.
         """
         self._repo = repo
         self._config = config
         self._year_provider: Callable[[], int] = (
             year_provider if year_provider is not None else lambda: datetime.datetime.now().year
         )
+        self._defer_writes: bool = defer_writes
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -249,7 +266,22 @@ class Router:
         path: FolderPath,
         display: str,
     ) -> RouteResult:
-        """Call ``ensure_folder`` then ``move_note`` and return SHOW_NOTE + MOVE.
+        """Resolve a terminal move and return SHOW_NOTE + MOVE.
+
+        Two branches, gated on :attr:`_defer_writes`:
+
+        - **Synchronous (``defer_writes=False``, the default)** — calls
+          ``ensure_folder`` then ``move_note`` (ensure always before move so
+          the target exists), logs at info, and returns the MOVE result.  This
+          is the CLI ``SortController`` path.
+        - **Deferred (``defer_writes=True``)** — performs NO I/O: it skips both
+          ``ensure_folder`` and ``move_note``, logs at debug that the write is
+          deferred, and returns the SAME MOVE result.  The caller (SortScreen)
+          owns the off-thread write to the resolved path.
+
+        The returned ``RouteResult`` is identical in both branches —
+        ``folder_path`` and ``display_path`` are populated the same way — so the
+        deferred caller writes to exactly the path the router computed.
 
         Args:
             note:    The note to move.
@@ -260,9 +292,12 @@ class Router:
             A ``RouteResult`` with ``state=SHOW_NOTE``, ``action=MOVE``, and
             the resolved path/display info.
         """
-        self._repo.ensure_folder(path)
-        self._repo.move_note(note.id, path)
-        logger.info("Moved note %r to %s", note.id, display)
+        if self._defer_writes:
+            logger.debug("Resolved move for note %r to %s (write deferred)", note.id, display)
+        else:
+            self._repo.ensure_folder(path)
+            self._repo.move_note(note.id, path)
+            logger.info("Moved note %r to %s", note.id, display)
         return RouteResult(
             state=RouterState.SHOW_NOTE,
             action=RouteAction.MOVE,

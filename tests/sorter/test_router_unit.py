@@ -614,3 +614,118 @@ class TestAwaitSubfolderTransition:
         folder_result = router.handle_folder(1, cat_result, _note("id1"))
         assert folder_result.state == RouterState.AWAIT_SUBFOLDER
         assert folder_result.options[0] == "General"
+
+
+# ---------------------------------------------------------------------------
+# Phase 13-01 tests: defer_writes resolve-only seam (PERF-04 enabler)
+# ---------------------------------------------------------------------------
+
+
+class TestDeferWritesSeam:
+    """Router(defer_writes=True) resolves MOVE results WITHOUT writing (PERF-04).
+
+    The CLI default (``defer_writes=False``) MUST keep writing synchronously —
+    ``ensure_folder`` before ``move_note`` — exactly as today.  Navigation
+    transitions never wrote and are unaffected by the flag.
+    """
+
+    def setup_method(self) -> None:
+        # Projects -> (General, Web) leaf folders; Projects/Web -> (Frontend,)
+        # gives a reachable 3-level subfolder move.  Areas is a leaf root so
+        # selecting it moves directly to ("Areas",).
+        self.structure = ParaStructure(
+            roots=("Projects", "Areas", "Resources", "Archive"),
+            subfolders={
+                "Projects": ("General", "Web"),
+                "Projects/Web": ("Frontend",),
+                "Areas": (),
+                "Resources": (),
+                "Archive": (),
+            },
+        )
+        self.cfg = _config()
+
+    def _repo(self) -> MockNotesRepository:
+        """Return a freshly-seeded mock repository for one test."""
+        return MockNotesRepository(notes=[_note("id1")], structure=self.structure)
+
+    # -- Deferred (defer_writes=True): resolve only, NO write -----------------
+
+    def test_defer_archive_resolves_without_write(self) -> None:
+        """[X] resolves to (Archive, year) with NO ensure_folder / move_note."""
+        repo = self._repo()
+        router = Router(repo=repo, config=self.cfg, year_provider=lambda: 2031, defer_writes=True)
+        result = router.handle_category("x", _note("id1"))
+        assert result.action == RouteAction.MOVE
+        assert result.folder_path == ("Archive", "2031")
+        assert result.display_path
+        assert repo.moves == []
+        assert repo.created_folders == []
+
+    def test_defer_leaf_folder_resolves_without_write(self) -> None:
+        """A leaf root (Areas) resolves to ("Areas",) with NO write when deferred."""
+        repo = self._repo()
+        router = Router(repo=repo, config=self.cfg, defer_writes=True)
+        result = router.handle_category("a", _note("id1"))
+        assert result.action == RouteAction.MOVE
+        assert result.folder_path == ("Areas",)
+        assert result.display_path
+        assert repo.moves == []
+        assert repo.created_folders == []
+
+    def test_defer_subfolder_resolves_without_write(self) -> None:
+        """Projects -> Web -> Frontend resolves to the 3-tuple with NO write."""
+        repo = self._repo()
+        router = Router(repo=repo, config=self.cfg, defer_writes=True)
+        cat_result = router.handle_category("p", _note("id1"))
+        # Web is index 2 (General first, then Web).
+        web_index = cat_result.options.index("Web") + 1
+        folder_result = router.handle_folder(web_index, cat_result, _note("id1"))
+        assert folder_result.state == RouterState.AWAIT_SUBFOLDER
+        sub_result = router.handle_subfolder(1, folder_result, _note("id1"))
+        assert sub_result.action == RouteAction.MOVE
+        assert sub_result.folder_path == ("Projects", "Web", "Frontend")
+        assert repo.moves == []
+        assert repo.created_folders == []
+
+    def test_defer_navigation_unaffected(self) -> None:
+        """[P] (Projects has subfolders) still navigates and writes nothing."""
+        repo = self._repo()
+        router = Router(repo=repo, config=self.cfg, defer_writes=True)
+        result = router.handle_category("p", _note("id1"))
+        assert result.state == RouterState.AWAIT_FOLDER
+        assert result.options  # non-empty folder options
+        assert repo.moves == []
+        assert repo.created_folders == []
+
+    # -- Default (defer_writes=False): synchronous write ----------------------
+
+    def test_default_writes_archive(self) -> None:
+        """Default router writes the archive move synchronously."""
+        repo = self._repo()
+        router = Router(repo=repo, config=self.cfg, year_provider=lambda: 2031)
+        router.handle_category("x", _note("id1"))
+        assert repo.moves == [("id1", ("Archive", "2031"))]
+        assert ("Archive", "2031") in repo.created_folders
+
+    def test_default_writes_ensure_before_move_order(self) -> None:
+        """Default router calls ensure_folder BEFORE move_note on a leaf move."""
+        repo = self._repo()
+        router = Router(repo=repo, config=self.cfg)
+        call_order: list[str] = []
+        original_ensure = repo.ensure_folder
+        original_move = repo.move_note
+
+        def tracked_ensure(path: tuple[str, ...]) -> None:
+            call_order.append("ensure_folder")
+            original_ensure(path)
+
+        def tracked_move(note_id: str, path: tuple[str, ...]) -> None:
+            call_order.append("move_note")
+            original_move(note_id, path)
+
+        repo.ensure_folder = tracked_ensure  # type: ignore[method-assign]
+        repo.move_note = tracked_move  # type: ignore[method-assign]
+        router.handle_category("a", _note("id1"))  # Areas leaf -> ("Areas",)
+        assert call_order == ["ensure_folder", "move_note"]
+        assert repo.moves == [("id1", ("Areas",))]
