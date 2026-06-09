@@ -4,9 +4,9 @@
 
 **NotesOS M1 — PARA Notes Sorter.** A local-first, keyboard-driven CLI/TUI that lets you triage
 your Apple Notes inbox into a PARA folder structure (Projects / Areas / Resources / Archive) using
-single keystrokes. Notes are moved, never deleted; the Notes database is backed up automatically
-before every write. The app runs entirely on macOS via an AppleScript bridge and has no network
-dependencies in M1.
+single keystrokes. Notes are moved, never deleted; the Notes database is backed up automatically —
+a restore point is captured before the first write of each triage session. The app runs entirely
+on macOS via an AppleScript bridge and has no network dependencies in M1.
 
 See `.planning/PROJECT.md` for the full four-milestone vision and requirement list.
 

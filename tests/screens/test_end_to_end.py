@@ -305,9 +305,17 @@ async def test_end_to_end_home_sort_extract_finish(tmp_path: Path) -> None:
         assert len(mock_inner.moves) == 2, f"Expected 2 total moves, got {mock_inner.moves!r}"
         assert mock_inner.moves[1][0] == "e2e-note-2"
 
-        # SC2: backup called again for note 2 (create() total count grew)
-        assert spy_manager.create.call_count > backup_calls_after_note1, (
-            f"SC2: Expected additional backup create() calls for note 2, "
+        # BKUP-07 (per-session cadence, Phase 12): the WHOLE visit captures
+        # exactly ONE restore point — taken before note 1's first write — so
+        # routing note 2 in the same session triggers NO additional create().
+        # Previously this asserted a per-write backup (count grew for note 2);
+        # that before-every-write cadence was removed in Phase 12 (BKUP-08).
+        assert backup_calls_after_note1 == 1, (
+            f"BKUP-07: exactly one backup before the first write, "
+            f"got {backup_calls_after_note1}"
+        )
+        assert spy_manager.create.call_count == backup_calls_after_note1, (
+            f"BKUP-07: no additional backup for note 2 in the same session, "
             f"total={spy_manager.create.call_count}, "
             f"after-note-1={backup_calls_after_note1}"
         )

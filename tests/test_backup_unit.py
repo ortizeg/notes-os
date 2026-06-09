@@ -1,10 +1,16 @@
-"""Unit tests for the NotesOS backup subsystem (plans 03-01 and 03-02).
+"""Unit tests for the NotesOS backup subsystem (plans 03-01, 03-02, and 12-01).
 
 Covers :class:`~notes_os.backup.BackupManager` (create + list + restore + prune) and
-:class:`~notes_os.backup.BackingUpNotesRepository` (decorator backup-before-write
-and fail-aborts-write) using ``tmp_path`` fixtures and local mocks.  No
+:class:`~notes_os.backup.BackingUpNotesRepository` (per-session backup cadence and
+fail-aborts-first-write) using ``tmp_path`` fixtures and local mocks.  No
 AppleScript, no real Notes database, no network.  All tests run under the
 default ``-m 'not integration'`` CI gate.
+
+Plan 12-01 (per-session cadence) adds a focused test group proving that N moves
+in one session produce exactly ONE backup, that :meth:`begin_session` re-arms the
+latch for the next session, that a failed FIRST-WRITE backup aborts the write and
+leaves the latch unset for retry (BKUP-06), and that ``auto_backup_on_write=False``
+never backs up and never sets the latch.
 
 Test helpers defined here for reuse:
 - ``make_db_dir(tmp_path, include_sidecars=True)`` — writes the three Notes DB
@@ -37,6 +43,7 @@ from notes_os.backup import (
     NOTE_STORE_SIDECARS,
     BackingUpNotesRepository,
     BackupManager,
+    BackupResettable,
 )
 from notes_os.backup_models import Backup, BackupConfig
 from notes_os.exceptions import BackupError
@@ -544,6 +551,135 @@ def test_decorator_auto_backup_disabled(tmp_path: Path) -> None:
 
     assert spy.create_calls == [], "no backup when auto_backup_on_write=False"
     assert len(inner.moves) == 1, "inner.move_note must still be called"
+
+
+# ---------------------------------------------------------------------------
+# Plan 12-01: per-session backup cadence (BKUP-06 / BKUP-07 / BKUP-08)
+# ---------------------------------------------------------------------------
+
+
+def _make_multi_inner() -> MockNotesRepository:
+    """Build a ``MockNotesRepository`` seeded with three notes and one root.
+
+    Three distinct notes (``n1``..``n3``) let multi-move tests record several
+    writes in one session; ``MockNotesRepository.move_note`` removes a note from
+    its in-memory inbox on each success, so distinct ids are required.  The
+    ``("Projects",)`` root is the sole valid destination.
+
+    Returns:
+        A seeded :class:`~tests.sorter.conftest.MockNotesRepository`.
+    """
+    notes = [
+        Note(id="n1", title="T1", body="", preview=""),
+        Note(id="n2", title="T2", body="", preview=""),
+        Note(id="n3", title="T3", body="", preview=""),
+    ]
+    structure = ParaStructure(roots=("Projects",), subfolders={"Projects": ()})
+    return MockNotesRepository(notes=notes, structure=structure)
+
+
+def test_one_backup_per_session_many_moves(tmp_path: Path) -> None:
+    """N moves in one session trigger exactly ONE create() (BKUP-07)."""
+    cfg = make_config(tmp_path)
+    inner = _make_multi_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    repo.move_note("n1", ("Projects",))
+    repo.move_note("n2", ("Projects",))
+    repo.move_note("n3", ("Projects",))
+
+    assert len(spy.create_calls) == 1, "exactly one backup for the whole session"
+    assert len(inner.moves) == 3, "all three moves delegated to the inner repo"
+
+
+def test_ensure_folder_and_move_share_one_session_backup(tmp_path: Path) -> None:
+    """ensure_folder + move_note in one session share a SINGLE create() call."""
+    cfg = make_config(tmp_path)
+    inner = _make_multi_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    repo.ensure_folder(("Projects", "Sub"))
+    repo.move_note("n1", ("Projects",))
+
+    assert len(spy.create_calls) == 1, "ensure_folder + move_note = one session backup"
+    assert inner.created_folders == [("Projects", "Sub")]
+    assert len(inner.moves) == 1
+
+
+def test_begin_session_rearms_backup(tmp_path: Path) -> None:
+    """begin_session() re-arms the latch so the NEXT session backs up again."""
+    cfg = make_config(tmp_path)
+    inner = _make_multi_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    repo.move_note("n1", ("Projects",))
+    assert len(spy.create_calls) == 1
+
+    repo.begin_session()  # new session — re-arm
+    repo.move_note("n2", ("Projects",))
+
+    assert len(spy.create_calls) == 2, "new session must produce a new backup"
+
+
+def test_first_write_backup_failure_aborts_and_leaves_latch_unset(tmp_path: Path) -> None:
+    """A failed first-write backup aborts the write and leaves the latch unset (BKUP-06).
+
+    The inner repo is never called, ``_session_backed_up`` stays ``False`` so an
+    immediate retry re-attempts the backup; once the backup stops failing the
+    next first write backs up and the write goes through.
+    """
+    cfg = make_config(tmp_path)
+    inner = _make_multi_inner()
+    err = BackupError("disk full")
+    spy = SpyBackupManager(cfg, raise_on_create=err)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    with pytest.raises(BackupError):
+        repo.move_note("n1", ("Projects",))
+
+    assert inner.moves == [], "inner repo must not be called when the backup fails"
+    assert repo._session_backed_up is False, "latch must stay unset for retry (BKUP-06)"
+
+    # Stop the backup failing — a retry must now back up and complete the write.
+    spy._raise = None
+    repo.move_note("n1", ("Projects",))
+
+    assert len(spy.create_calls) == 1, "retry re-attempts the backup once it can succeed"
+    assert len(inner.moves) == 1, "the write completes on the successful retry"
+    assert repo._session_backed_up is True, "latch set only after a successful create()"
+
+
+def test_auto_backup_disabled_never_backs_up_across_sessions(tmp_path: Path) -> None:
+    """auto_backup_on_write=False never backs up and never sets the latch.
+
+    Pins the config/latch contract: the latch stays ``False`` across multiple
+    writes and sessions so a future phase can never read a stale ``True``.
+    """
+    cfg = make_config(tmp_path, auto_backup_on_write=False)
+    inner = _make_multi_inner()
+    spy = SpyBackupManager(cfg)
+    repo = BackingUpNotesRepository(inner, spy, cfg)
+
+    repo.move_note("n1", ("Projects",))
+    assert repo._session_backed_up is False
+    repo.begin_session()
+    repo.move_note("n2", ("Projects",))
+
+    assert spy.create_calls == [], "no backup ever when auto_backup_on_write=False"
+    assert len(inner.moves) == 2, "both inner moves still happen"
+    assert repo._session_backed_up is False, "latch never set when disabled"
+
+
+def test_backing_up_repo_is_backup_resettable(tmp_path: Path) -> None:
+    """BackingUpNotesRepository is a BackupResettable; a plain mock repo is NOT."""
+    cfg = make_config(tmp_path)
+    repo = BackingUpNotesRepository(make_inner(), SpyBackupManager(cfg), cfg)
+
+    assert isinstance(repo, BackupResettable)
+    assert not isinstance(make_inner(), BackupResettable)
 
 
 # ---------------------------------------------------------------------------
