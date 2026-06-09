@@ -18,4 +18,7 @@ coverage floor**.
 **Success criteria:** see `.planning/milestones/v3.0-speed-triage-ux-ROADMAP.md` › Phase 12.
 **Design:** `.planning/SPEC-speed-and-triage-ux.md` › Phase 3.
 
-**Plan next:** `/gsd-plan-phase 12`
+**Plans:** 1 plan, 1 wave (autonomous)
+- [ ] `12-01-PLAN.md` — per-session backup latch + `begin_session` seam, threat-model doc reword (BKUP-07, BKUP-08)
+
+**Execute next:** `/gsd-execute-phase 12`
