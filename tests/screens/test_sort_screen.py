@@ -31,6 +31,7 @@ All widget queries use app.screen.query_one(...).
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -42,7 +43,7 @@ from notes_os.app import NotesOSApp
 from notes_os.backup import BackingUpNotesRepository, BackupManager
 from notes_os.backup_models import Backup
 from notes_os.exceptions import BackupError
-from notes_os.screens.sort import SortScreen
+from notes_os.screens.sort import _BULK_PAGE_SIZE, _BULK_THRESHOLD, SortScreen
 from notes_os.sorter.models import Note, ParaStructure
 from notes_os.sorter.router import RouterState
 
@@ -740,3 +741,198 @@ async def test_digit_alone_does_not_move(tui_config: SorterConfig) -> None:
         assert moved_path == ("Projects", "General"), (
             f"Expected ('Projects', 'General'), got {moved_path!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# PERF-01/02/03: background bulk paged preview load (Plan 10-02)
+# ---------------------------------------------------------------------------
+
+
+def _make_bulk_notes(count: int) -> list[Note]:
+    """Return *count* notes with distinct ids and previews for bulk-load tests.
+
+    Each note has id ``bulk-{i}`` and preview ``preview {i}`` so a test can
+    assert which note's body landed (id-keyed cache merge) and that the real
+    preview — not the "Loading preview…" placeholder — is rendered.
+
+    Args:
+        count: Number of notes to synthesise.
+
+    Returns:
+        A list of *count* :class:`~notes_os.sorter.models.Note` objects.
+    """
+    return [
+        Note(
+            id=f"bulk-{i}",
+            title=f"Bulk Note {i}",
+            body=f"<p>preview {i}</p>",
+            preview=f"preview {i}",
+        )
+        for i in range(count)
+    ]
+
+
+async def test_small_inbox_single_bulk_no_indicator(tui_config: SorterConfig) -> None:
+    """PERF-01: a <=threshold inbox fills the cache in one silent bulk call.
+
+    Seed 5 notes (well under ``_BULK_THRESHOLD``).  After draining the bulk
+    worker: every note body is in ``_note_cache``, ``_previews_streaming`` is
+    False, the first note's REAL preview shows (not "Loading preview…"), and
+    the ``#progress`` text never contains a "Loading previews…" indicator.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    notes = _make_bulk_notes(5)
+    assert len(notes) <= _BULK_THRESHOLD
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, notes)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        # Whole inbox is cached by the single silent bulk call.
+        assert all(n.id in sort_screen._note_cache for n in notes), (
+            f"Expected all ids cached, got {sorted(sort_screen._note_cache)!r}"
+        )
+        assert sort_screen._previews_streaming is False
+
+        # First note's real preview is rendered (not the loading placeholder).
+        preview_text = str(sort_screen.query_one("#note-preview", Static).render())
+        assert "preview 0" in preview_text, preview_text
+        assert "Loading preview" not in preview_text, preview_text
+
+        # No streaming indicator was ever shown for a sub-threshold inbox.
+        progress_text = str(sort_screen.query_one("#progress", Static).render())
+        assert "Loading previews" not in progress_text, progress_text
+
+
+async def test_large_inbox_paged_indicator_and_never_blocks(
+    tui_config: SorterConfig,
+) -> None:
+    """PERF-02: a >threshold inbox streams pages with an N/M indicator; keys live.
+
+    Seed ``_BULK_THRESHOLD + _BULK_PAGE_SIZE + 1`` notes (forces >=3 pages and
+    is definitely over threshold).  The mock's ``get_inbox_note_bodies`` is
+    wrapped to pause until released, so the indicator can be observed mid-stream
+    and a keystroke proven non-blocking BEFORE all bodies have landed.
+
+    Asserts:
+    - (a) never-block: a skip keystroke pressed mid-stream is honored
+      (``session.skipped == 1``) — the streaming body load did not gate the key.
+    - (b) indicator lifecycle: mid-stream the ``#progress`` text contains
+      "Loading previews…" and the "/M" fragment using the imported constant for
+      M; after draining, the full cache is populated, ``_previews_streaming`` is
+      False, and the indicator is gone.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    total = _BULK_THRESHOLD + _BULK_PAGE_SIZE + 1
+    notes = _make_bulk_notes(total)
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, notes)
+
+    # Gate the bulk page fetch so we can observe the streaming state mid-flight.
+    # The FIRST page is released immediately (so the screen is interactive and a
+    # keystroke can be sent); subsequent pages block on the gate until set.
+    gate = threading.Event()
+    first_page_done = threading.Event()
+    real_bodies = mock_inner.get_inbox_note_bodies
+
+    def gated_bodies(offset: int, count: int) -> list[Note]:
+        if offset == 0:
+            result = real_bodies(offset, count)
+            first_page_done.set()
+            return result
+        gate.wait(timeout=5.0)
+        return real_bodies(offset, count)
+
+    mock_inner.get_inbox_note_bodies = gated_bodies  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        # Wait for the first page to land while later pages are still gated.
+        while not first_page_done.is_set():
+            await pilot.pause()
+        await pilot.pause()
+
+        # Indicator is live mid-stream: "Loading previews… N/M" with M == total.
+        assert sort_screen._previews_streaming is True
+        progress_mid = str(sort_screen.query_one("#progress", Static).render())
+        assert "Loading previews" in progress_mid, progress_mid
+        assert f"/{total}" in progress_mid, progress_mid
+        assert sort_screen._previews_total == total
+
+        # (a) Never-block: a skip keystroke is honored while bodies still stream.
+        await pilot.press("s")
+        await pilot.pause()
+        assert sort_screen._session.summary().skipped == 1, (
+            "skip keystroke must be honored mid-stream (body load must not block keys)"
+        )
+
+        # Release the gate and drain the remaining pages.
+        gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # (b) Lifecycle: all bodies merged, streaming cleared, indicator gone.
+        assert sort_screen._previews_streaming is False
+        assert all(n.id in sort_screen._note_cache for n in notes), (
+            f"Expected all {total} ids cached, got {len(sort_screen._note_cache)}"
+        )
+        progress_done = str(sort_screen.query_one("#progress", Static).render())
+        assert "Loading previews" not in progress_done, progress_done
+
+
+async def test_cold_note_resolves_via_get_note_fallback(
+    tui_config: SorterConfig,
+) -> None:
+    """PERF-03: a note reached before its page lands resolves via get_note.
+
+    Force the cache-miss path: stub the bulk fetch to return ``[]`` (a page that
+    never arrives / errored), so the bulk load leaves ``_note_cache`` empty.
+    Spy on ``get_note``.  When the screen renders the current note, the cache
+    miss must route through the by-id ``get_note`` fallback and resolve the real
+    preview — proving the single-note fallback survives the ``_prefetch_next``
+    retirement.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    notes = _make_bulk_notes(3)
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, notes)
+
+    # Simulate a bulk page that never arrives — leaves _note_cache empty so the
+    # render hits the by-id fallback.
+    mock_inner.get_inbox_note_bodies = lambda offset, count: []  # type: ignore[method-assign]
+    get_note_spy = MagicMock(side_effect=mock_inner.get_note)
+    mock_inner.get_note = get_note_spy  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        # Bulk path left the cache empty; the by-id fallback was kicked.
+        get_note_spy.assert_any_call("bulk-0")
+
+        # After the fallback worker drains, the real preview is rendered.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        preview_text = str(sort_screen.query_one("#note-preview", Static).render())
+        assert "preview 0" in preview_text, preview_text
+        assert "Loading preview" not in preview_text, preview_text
