@@ -39,7 +39,7 @@ from unittest.mock import MagicMock
 from textual.events import Key
 from textual.widgets import Static
 
-from notes_os.app import NotesOSApp
+from notes_os.app import NotesOSApp, ResumePromptModal
 from notes_os.backup import BackingUpNotesRepository, BackupManager
 from notes_os.backup_models import Backup
 from notes_os.exceptions import BackupError, NotesMoveError
@@ -53,10 +53,13 @@ from notes_os.screens.sort import (
     SortScreen,
 )
 from notes_os.sorter.models import Note, ParaStructure
+from notes_os.sorter.resume import ResumeStore, SessionState
 from notes_os.sorter.router import RouterState
 
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from notes_os.config import SorterConfig
     from notes_os.sorter.models import FolderPath
     from tests.sorter.conftest import MockNotesRepository
@@ -1770,3 +1773,465 @@ async def test_undo_move_back_failure_surfaced_without_corruption(
         # The failed move-back surfaced through the EXISTING _on_write_failed path.
         assert len(sort_screen._failed_moves) == 1, "failed move-back must be tracked"
         assert sort_screen._failed_moves[0][0] == "undo-fail-1"
+
+
+# ---------------------------------------------------------------------------
+# Session resume (UX-03) — save points, always-ask modal, clear points
+# ---------------------------------------------------------------------------
+
+# Fixed clock injected as ``now_provider`` so the persisted ``saved_at`` is
+# deterministic across runs (CLAUDE.md inject-the-clock; no wall-clock reliance).
+_RESUME_SAVED_AT = datetime(2026, 6, 9, 10, 30, 0)
+
+
+def _resume_notes(count: int) -> list[Note]:
+    """Return *count* distinct notes for a resume-session inbox.
+
+    Each note has a stable, position-encoded id (``r-note-0``..) so a test can
+    assert the saved ``note_ids`` signature and the resumed ``_index`` deterministically.
+
+    Args:
+        count: Number of notes to build (the inbox size).
+
+    Returns:
+        A list of *count* distinct :class:`~notes_os.sorter.models.Note` objects.
+    """
+    return [
+        Note(id=f"r-note-{i}", title=f"Resume Note {i}", body=f"<p>n{i}</p>", preview=f"n{i}")
+        for i in range(count)
+    ]
+
+
+async def test_advance_saves_session_state(tui_config: SorterConfig, tmp_path: Path) -> None:
+    """UX-03 save-point: skipping a note persists a matching SessionState.
+
+    Skip note 0 of a 3-note inbox; the per-note save at the end of ``_advance``
+    must persist a state with the current inbox folder, the exact id signature,
+    the NEW ``_index == 1``, and ``skipped == 1`` / ``moved == 0``.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("s")
+        await pilot.pause()
+
+        state = store.load()
+        assert state is not None, "advance must persist a session state"
+        assert state.inbox_folder == "Notes", state.inbox_folder
+        assert state.note_ids == ("r-note-0", "r-note-1", "r-note-2"), state.note_ids
+        assert state.index == 1, state.index
+        assert state.skipped == 1, state.skipped
+        assert state.moved == 0, state.moved
+        assert state.saved_at == _RESUME_SAVED_AT
+
+
+async def test_leave_mid_session_saves_state(tui_config: SorterConfig, tmp_path: Path) -> None:
+    """UX-03 save-point: Esc at AWAIT_CATEGORY after starting persists the position.
+
+    Skip one note (index → 1), then press Esc to leave; ``action_back`` must save
+    BEFORE ``pop_screen`` so the INJECTED store (held by reference here, since the
+    popped screen's ``_store`` is detached) reports ``index == 1``.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("s")  # index → 1
+        await pilot.pause()
+        await pilot.press("escape")  # leave mid-session — pops the screen
+        await pilot.pause()
+
+        state = store.load()
+        assert state is not None, "leave-mid-session must persist a state before pop"
+        assert state.index == 1, state.index
+
+
+async def test_leave_at_index_zero_does_not_save(tui_config: SorterConfig, tmp_path: Path) -> None:
+    """UX-03 save-point guard: leaving an unstarted (index-0) session saves nothing.
+
+    Push the screen, immediately press Esc without processing a note; the save-point
+    guard (``0 < _index < len(refs)``) suppresses the save, so ``store.load()`` is None.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("escape")  # leave with index still 0
+        await pilot.pause()
+
+        assert store.load() is None, "an unstarted (index-0) session must not be saved"
+
+
+async def test_empty_inbox_never_saves(tui_config: SorterConfig, tmp_path: Path) -> None:
+    """UX-03 save-point guard: an empty inbox saves nothing.
+
+    Push the screen over an EMPTY inbox; ``_inbox_empty`` is True so no save point
+    can fire and ``store.load()`` is None.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, [])
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert store.load() is None, "an empty inbox must never save a resume state"
+
+
+async def test_finish_leaves_no_saved_session_state(
+    tui_config: SorterConfig, tmp_path: Path
+) -> None:
+    """UX-03: finishing a single-note session leaves no resumable file.
+
+    The per-note save is suppressed at the finish boundary (``_index >= len(refs)``)
+    AND ``_complete_finish`` explicitly clears — so after the only note is skipped,
+    ``store.load()`` is None.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(1))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("s")  # skip the only note → session finishes
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert store.load() is None, "a finished session must leave no resumable file"
+
+
+async def test_matching_state_resume_lands_and_restores_counts(
+    tui_config: SorterConfig, tmp_path: Path
+) -> None:
+    """UX-03 success criterion 1: a matching saved state → modal → Resume.
+
+    Pre-save a matching state (index=2, moved=1, skipped=1).  Push the screen; a
+    ResumePromptModal must appear.  Press 'y' (Resume): ``_index == 2`` and the
+    restored counts (moved=1, skipped=1, errors=0) carry into the session.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    store.save(
+        SessionState(
+            inbox_folder="Notes",
+            note_ids=("r-note-0", "r-note-1", "r-note-2"),
+            index=2,
+            moved=1,
+            skipped=1,
+            errors=0,
+            saved_at=_RESUME_SAVED_AT,
+        )
+    )
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ResumePromptModal), (
+            f"a matching saved state must always ask, got {type(app.screen)}"
+        )
+
+        await pilot.press("y")  # Resume
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        assert isinstance(sort_screen, SortScreen), type(sort_screen)
+        assert sort_screen._index == 2, sort_screen._index
+        summary = sort_screen._session.summary()
+        assert (summary.moved, summary.skipped, summary.errors) == (1, 1, 0), summary
+
+
+async def test_start_over_clears_and_resets_index(tui_config: SorterConfig, tmp_path: Path) -> None:
+    """UX-03 success criterion 2: Start over clears the saved state and resets to 0.
+
+    Same pre-saved matching state; on the modal press 'n' (Start over): ``_index == 0``,
+    ``store.load()`` is None (cleared), and the session counts are all zero (fresh).
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    store.save(
+        SessionState(
+            inbox_folder="Notes",
+            note_ids=("r-note-0", "r-note-1", "r-note-2"),
+            index=2,
+            moved=1,
+            skipped=1,
+            errors=0,
+            saved_at=_RESUME_SAVED_AT,
+        )
+    )
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ResumePromptModal), type(app.screen)
+
+        await pilot.press("n")  # Start over
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        assert isinstance(sort_screen, SortScreen), type(sort_screen)
+        assert sort_screen._index == 0, sort_screen._index
+        assert store.load() is None, "Start over must clear the saved state"
+        summary = sort_screen._session.summary()
+        assert (summary.moved, summary.skipped, summary.errors) == (0, 0, 0), summary
+
+
+async def test_stale_ids_no_prompt_index_zero_and_cleared(
+    tui_config: SorterConfig, tmp_path: Path
+) -> None:
+    """UX-03 success criterion 3: a stale id signature → no prompt, index 0, cleared.
+
+    Pre-save a state whose ``note_ids`` do NOT match the current inbox; the screen
+    must render directly (NO ResumePromptModal), land at ``_index == 0``, and clear
+    the stale file so it can never mislead a later launch.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    store.save(
+        SessionState(
+            inbox_folder="Notes",
+            note_ids=("x", "y", "z"),  # do not match the r-note-* inbox
+            index=2,
+            moved=1,
+            skipped=0,
+            errors=0,
+            saved_at=_RESUME_SAVED_AT,
+        )
+    )
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, SortScreen), (
+            f"a stale signature must NOT prompt, got {type(app.screen)}"
+        )
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        assert sort_screen._index == 0, sort_screen._index
+        assert store.load() is None, "a stale file must be cleared"
+
+
+async def test_no_saved_state_no_prompt(tui_config: SorterConfig, tmp_path: Path) -> None:
+    """UX-03: an empty store renders directly with no prompt at index 0.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, SortScreen), type(app.screen)
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        assert sort_screen._index == 0, sort_screen._index
+
+
+async def test_out_of_range_index_no_prompt(tui_config: SorterConfig, tmp_path: Path) -> None:
+    """UX-03 / T-15-07: a matching state with an out-of-range index → no prompt, index 0.
+
+    Pre-save a matching-ids state with ``index == len(refs)`` (out of range).  The
+    in-range bound (``0 < index < len(refs)``) filters it to start-over: no modal,
+    ``_index == 0``.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    store.save(
+        SessionState(
+            inbox_folder="Notes",
+            note_ids=("r-note-0", "r-note-1", "r-note-2"),
+            index=3,  # == len(refs) — out of range
+            moved=2,
+            skipped=1,
+            errors=0,
+            saved_at=_RESUME_SAVED_AT,
+        )
+    )
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, SortScreen), (
+            f"an out-of-range index must NOT prompt, got {type(app.screen)}"
+        )
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        assert sort_screen._index == 0, sort_screen._index
+
+
+async def test_resume_to_finish_clears_state(tui_config: SorterConfig, tmp_path: Path) -> None:
+    """UX-03 / T-15-10: resuming into the last note and finishing clears the state.
+
+    Pre-save a matching state at index=2 of a 3-note inbox.  Resume, then skip the
+    final note so the session finishes; ``_complete_finish`` clears, so
+    ``store.load()`` is None afterwards.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    store.save(
+        SessionState(
+            inbox_folder="Notes",
+            note_ids=("r-note-0", "r-note-1", "r-note-2"),
+            index=2,
+            moved=1,
+            skipped=1,
+            errors=0,
+            saved_at=_RESUME_SAVED_AT,
+        )
+    )
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ResumePromptModal), type(app.screen)
+        await pilot.press("y")  # Resume at index 2 (last note)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("s")  # skip last note → finish
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert store.load() is None, "a resumed session that finishes must clear its state"
+
+
+async def test_previews_load_on_resumed_note(tui_config: SorterConfig, tmp_path: Path) -> None:
+    """UX-03 / T-15-09: the resumed note's real preview loads (no bulk-load race).
+
+    Resume into index=2 on a small inbox; after workers + pause the current note's
+    preview must be the real body (the id-keyed bulk cache resolved the resumed
+    note — Phase-10 self-correcting guard), not the dim skeleton placeholder.
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tmp_path: Per-test temp dir for the injected store.
+    """
+    store = ResumeStore(path=tmp_path / "session-state.json")
+    store.save(
+        SessionState(
+            inbox_folder="Notes",
+            note_ids=("r-note-0", "r-note-1", "r-note-2"),
+            index=2,
+            moved=1,
+            skipped=1,
+            errors=0,
+            saved_at=_RESUME_SAVED_AT,
+        )
+    )
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, _resume_notes(3))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(store=store, now_provider=lambda: _RESUME_SAVED_AT))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("y")  # Resume at index 2
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        preview_text = str(sort_screen.query_one("#note-preview", Static).render())
+        assert preview_text == "n2", (
+            f"resumed note preview must be the real body, got {preview_text!r}"
+        )
+        assert _PREVIEW_SKELETON not in preview_text, "resumed note must not show the skeleton"

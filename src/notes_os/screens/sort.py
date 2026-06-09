@@ -92,6 +92,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from datetime import datetime
 from typing import TYPE_CHECKING, ClassVar
 
 from textual import work
@@ -102,6 +103,7 @@ from textual.widgets import Footer, Header, Static
 from notes_os.backup import BackupResettable
 from notes_os.exceptions import NotesOSError
 from notes_os.sorter.extractor import extract_tasks
+from notes_os.sorter.resume import ResumeStore, SessionState
 from notes_os.sorter.router import RouteAction, Router, RouteResult, RouterState
 from notes_os.sorter.session import _KIND_MOVE, _KIND_SKIP, SortSession
 
@@ -195,6 +197,14 @@ class SortScreen(Screen[None]):
         year_provider: Optional zero-argument callable returning the current
             year as an int.  Injected in tests for determinism; defaults to
             ``None`` (Router uses ``datetime.now().year``).
+        store: Optional :class:`~notes_os.sorter.resume.ResumeStore` providing
+            the session-resume persistence seam (UX-03).  Injected in tests with
+            a ``tmp_path``-scoped file; defaults to ``None`` → a default-
+            constructed store at ``~/.notes-os/session-state.json`` in production.
+        now_provider: Optional zero-argument callable returning the current
+            :class:`~datetime.datetime`.  Injected in tests for a deterministic
+            ``saved_at``; defaults to ``None`` (``datetime.now()`` at save time).
+            Mirrors the injected-clock pattern used by ``write_log``.
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -209,6 +219,9 @@ class SortScreen(Screen[None]):
         name: str | None = None,
         id: str | None = None,  # noqa: A002 — mirrors Textual Screen signature
         classes: str | None = None,
+        *,
+        store: ResumeStore | None = None,
+        now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         """Initialise SortScreen instance attributes.
 
@@ -223,9 +236,24 @@ class SortScreen(Screen[None]):
             name: Textual widget name (passed to super).
             id: Textual widget id (passed to super).
             classes: Textual CSS classes (passed to super).
+            store: Optional injected :class:`~notes_os.sorter.resume.ResumeStore`
+                (session-resume seam, UX-03).  Defaults to ``None`` → a default-
+                constructed store at ``~/.notes-os/session-state.json``.
+            now_provider: Optional injected clock returning a
+                :class:`~datetime.datetime` for the persisted ``saved_at``.
+                Defaults to ``None`` → ``datetime.now()`` at save time.
         """
         super().__init__(name=name, id=id, classes=classes)
         self._year_provider = year_provider
+        # Session-resume persistence seam (UX-03).  Default-constructed store
+        # lives at ~/.notes-os/session-state.json; tests inject a tmp_path store.
+        self._store: ResumeStore = store if store is not None else ResumeStore()
+        # Injected clock for the persisted ``saved_at`` (CLAUDE.md inject-the-clock).
+        self._now_provider = now_provider
+        # Transient holder for the saved state while the ResumePromptModal is open
+        # — set in _apply_inbox_refs when resumable, consumed + cleared in the
+        # _on_resume_decision dismiss callback.
+        self._pending_resume_state: SessionState | None = None
         self._router: Router | None = None
         self._session: SortSession = SortSession()
         # Lightweight refs — id+title only (populated by _load_inbox_refs)
@@ -352,6 +380,15 @@ class SortScreen(Screen[None]):
         ``MockNotesRepository``) is safely skipped via the ``BackupResettable``
         guard.
 
+        Resume decision (UX-03 always-ask): after ``_refs`` is set and BEFORE the
+        first render, the saved state is loaded.  If it is RESUMABLE — it exists,
+        :meth:`~notes_os.sorter.resume.SessionState.matches` the current inbox
+        (same folder + exact id signature) AND its index is in range
+        (``0 < index < len(refs)``) — a :class:`~notes_os.app.ResumePromptModal`
+        is ALWAYS pushed (non-blocking) and the first render + bulk-load start are
+        DEFERRED to :meth:`_on_resume_decision`.  If NOT resumable, any stale file
+        is cleared and the screen renders at index 0 with NO prompt.
+
         Args:
             refs: The inbox refs returned by ``get_inbox_note_refs()``.
         """
@@ -371,6 +408,73 @@ class SortScreen(Screen[None]):
             self._render_empty_inbox()
             return
 
+        # Resume decision (UX-03) — before the first render so it never fights the
+        # Phase-10 bulk-body worker (the cache is id-keyed, filled independently).
+        current_ids = tuple(r.id for r in self._refs)
+        inbox = app.app_config.bridge.inbox_folder
+        state = self._store.load()
+        # ``state is not None`` is FIRST so mypy narrows ``state`` inside the block.
+        if (
+            state is not None
+            and state.matches(inbox, current_ids)
+            and 0 < state.index < len(self._refs)
+        ):
+            # Always-ask: stash the state and defer render + bulk-load to the
+            # dismiss callback, which owns BOTH the Resume and Start-over branches.
+            self._pending_resume_state = state
+            from notes_os.app import ResumePromptModal
+
+            self.app.push_screen(
+                ResumePromptModal(index=state.index, total=len(self._refs)),
+                self._on_resume_decision,
+            )
+            return
+
+        # Not resumable — clear any stale/out-of-range file so it can never
+        # mislead a future launch, then render at index 0 as usual.
+        if state is not None:
+            self._store.clear()
+        self._render_current_note()
+        self._start_bulk_body_load()
+
+    def _on_resume_decision(self, resume: bool | None) -> None:
+        """Apply the ResumePromptModal result, then render + start the bulk load (UX-03).
+
+        Dismiss callback for the always-ask :class:`~notes_os.app.ResumePromptModal`
+        pushed from :meth:`_apply_inbox_refs`.  Consumes the stashed
+        :attr:`_pending_resume_state` (clearing it) and branches on the result:
+
+        - ``resume is True`` → jump ``_index`` to the saved position and restore the
+          running counts via
+          :meth:`~notes_os.sorter.session.SortSession.restore_counts` so the resumed
+          tally continues the whole session.  The in-range bound was already enforced
+          before the prompt, so the jump is always valid (threat T-15-07).
+        - else (Start over / ``None`` / no stashed state) → clear the saved file and
+          render at index 0 (a fresh session).
+
+        BOTH branches finish by resetting the per-note router state and starting the
+        bulk body load.  The bulk load fills the id-keyed ``_note_cache``
+        independently of ``_index``, and the resumed render is an id-keyed lookup, so
+        a page landing before or after this callback resolves the correct note by id
+        — no race with the Phase-10 worker (threat T-15-09).
+
+        Args:
+            resume: The modal result — ``True`` (Resume), ``False`` (Start over), or
+                ``None`` (dismissed without a choice → treated as Start over).
+        """
+        state = self._pending_resume_state
+        self._pending_resume_state = None
+
+        if resume is True and state is not None:
+            self._index = state.index
+            self._session.restore_counts(state.moved, state.skipped, state.errors)
+        else:
+            self._store.clear()
+            self._index = 0
+
+        self._router_state = RouterState.AWAIT_CATEGORY
+        self._prev = None
+        self._current_note = None
         self._render_current_note()
         self._start_bulk_body_load()
 
@@ -809,6 +913,9 @@ class SortScreen(Screen[None]):
                 self._session.skipped,
                 self._session.errors,
             )
+            # Persist live progress BEFORE popping (UX-03 leave-mid-session save).
+            # The save-point guard no-ops on an unstarted (index-0) session.
+            self._save_session_state()
             self.app.pop_screen()
             return
 
@@ -1180,12 +1287,74 @@ class SortScreen(Screen[None]):
         )
         self._advance()
 
+    # ------------------------------------------------------------------
+    # Session resume persistence (UX-03)
+    # ------------------------------------------------------------------
+
+    def _now(self) -> datetime:
+        """Return the current time via the injected clock (UX-03).
+
+        Uses :attr:`_now_provider` when injected (tests pass a fixed value for a
+        deterministic ``saved_at``); otherwise falls back to ``datetime.now()``.
+        Mirrors the injected-clock pattern of ``write_log``.
+
+        Returns:
+            The wall-clock :class:`~datetime.datetime` to stamp on the saved state.
+        """
+        return self._now_provider() if self._now_provider is not None else datetime.now()
+
+    def _save_session_state(self) -> None:
+        """Persist the live session position so a relaunch can resume it (UX-03).
+
+        SAVE-POINT GUARD: returns immediately (saves NOTHING) when the session is
+        empty (:attr:`_inbox_empty`) or when ``_index`` is not strictly inside
+        ``0 < _index < len(_refs)``.  That guard suppresses the three non-resumable
+        cases — an empty inbox, an unstarted session (index 0), and a just-finished
+        session (``_index >= len(_refs)``) — so a completed/empty/unstarted session
+        never leaves a stale "Resume at N" file behind.
+
+        Otherwise builds a :class:`~notes_os.sorter.resume.SessionState` snapshot
+        (inbox folder + the exact note-id signature + the next-to-process ``_index``
+        + the three running counts + an injected ``saved_at``) and writes it via
+        :meth:`~notes_os.sorter.resume.ResumeStore.save`.
+
+        The write is wrapped in a defensive ``try/except OSError`` that logs and
+        continues (threat T-15-08): state persistence is best-effort — a disk-full
+        or permission error must never crash an in-progress triage session, since
+        the live :attr:`_session` is the source of truth.
+        """
+        if self._inbox_empty or not (0 < self._index < len(self._refs)):
+            return
+        app: NotesOSApp = self.app  # type: ignore[assignment]
+        state = SessionState(
+            inbox_folder=app.app_config.bridge.inbox_folder,
+            note_ids=tuple(r.id for r in self._refs),
+            index=self._index,
+            moved=self._session.moved,
+            skipped=self._session.skipped,
+            errors=self._session.errors,
+            saved_at=self._now(),
+        )
+        try:
+            self._store.save(state)
+        except OSError:
+            logger.warning(
+                "SortScreen: failed to save session state (best-effort) — continuing",
+                exc_info=True,
+            )
+
     def _advance(self) -> None:
         """Increment the note pointer and render the next note or finish.
 
         Resets ``_router_state`` to AWAIT_CATEGORY and clears ``_prev`` and
         ``_current_note`` for the next note.  When all notes are processed,
         calls :meth:`_finish`.
+
+        After the advance, persists the live session position via
+        :meth:`_save_session_state` (UX-03).  The save-point guard makes this a
+        no-op when the advance finished the session (``_index >= len(_refs)``), so
+        only LIVE progress is persisted — and the saved ``_index`` is the NEW
+        (next-to-process) position, exactly where a resume should land.
         """
         self._index += 1
         self._router_state = RouterState.AWAIT_CATEGORY
@@ -1195,6 +1364,7 @@ class SortScreen(Screen[None]):
             self._finish()
         else:
             self._render_current_note()
+        self._save_session_state()
 
     def _finish(self) -> None:
         """Finalize the session — DRAINING any in-flight writes first (T-13-08).
@@ -1226,12 +1396,27 @@ class SortScreen(Screen[None]):
         log via ``_session.write_log()``, and offers navigation back to
         HomeScreen.  Resets ``app.sort_in_progress`` to ``False`` so a subsequent
         ``Q`` quits directly (session is complete; T-06-11 guard no longer needed).
+
+        Clears the saved resume state (UX-03 / threat T-15-10): a completed session
+        has nothing to resume, so no "Resume at N" file may survive into the next
+        launch.  The clear is wrapped in a defensive ``try/except OSError`` that logs
+        and continues — clearing is best-effort and must never crash the summary
+        render.
         """
         app: NotesOSApp = self.app  # type: ignore[assignment]
         summary = self._session.summary()
         log_path = self._session.write_log(app.app_config.log_dir)
         # Reset quit-confirm guard — session is complete (T-06-11 mitigation)
         app.sort_in_progress = False
+        # Clear the saved resume state — a completed session leaves nothing to
+        # resume (best-effort; a clear failure must not crash the summary).
+        try:
+            self._store.clear()
+        except OSError:
+            logger.warning(
+                "SortScreen: failed to clear session state on finish (best-effort)",
+                exc_info=True,
+            )
         logger.info("SortScreen: session complete — log written to %s", log_path)
 
         summary_text = (
