@@ -29,7 +29,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-from notes_os.app import ConfirmQuitModal, NotesOSApp
+from notes_os.app import ConfirmQuitModal, NotesOSApp, ResumePromptModal
 from notes_os.backup import BackingUpNotesRepository, BackupManager
 from notes_os.backup_models import Backup
 from notes_os.screens.home import HomeScreen
@@ -591,3 +591,109 @@ async def test_sc4j_task_extract_esc_skips(
         # Esc maps to action_skip which calls self.dismiss([])
         assert len(dismissed_result) == 1
         assert dismissed_result[0] == []
+
+
+# ---------------------------------------------------------------------------
+# ResumePromptModal — Resume (Y/button) → True, Start over (N/Esc/button) → False
+# ---------------------------------------------------------------------------
+
+
+async def test_resume_prompt_y_resumes(
+    tui_config: SorterConfig,
+    tui_repo: MockNotesRepository,
+) -> None:
+    """ResumePromptModal: pressing Y dismisses with True (Resume).
+
+    The modal is pushed directly onto a minimal app — no SortScreen, no worker
+    wait (mirrors the SC4j _capture pattern).
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tui_repo: MockNotesRepository fixture.
+    """
+    app = NotesOSApp(config=tui_config, repo=tui_repo)
+    dismissed_result: list[bool | None] = []
+
+    def _capture(result: bool | None) -> None:
+        dismissed_result.append(result)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        modal = ResumePromptModal(index=2, total=10)
+        await app.push_screen(modal, _capture)
+        await pilot.pause()
+
+        assert isinstance(app.screen, ResumePromptModal)
+
+        await pilot.press("y")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, ResumePromptModal), (
+            "Expected ResumePromptModal dismissed after Y"
+        )
+        assert dismissed_result == [True]
+
+
+async def test_resume_prompt_n_starts_over(
+    tui_config: SorterConfig,
+    tui_repo: MockNotesRepository,
+) -> None:
+    """ResumePromptModal: pressing N dismisses with False (Start over).
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tui_repo: MockNotesRepository fixture.
+    """
+    app = NotesOSApp(config=tui_config, repo=tui_repo)
+    dismissed_result: list[bool | None] = []
+
+    def _capture(result: bool | None) -> None:
+        dismissed_result.append(result)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        modal = ResumePromptModal(index=0, total=5)
+        await app.push_screen(modal, _capture)
+        await pilot.pause()
+
+        await pilot.press("n")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, ResumePromptModal), (
+            "Expected ResumePromptModal dismissed after N"
+        )
+        assert dismissed_result == [False]
+
+
+async def test_resume_prompt_esc_starts_over(
+    tui_config: SorterConfig,
+    tui_repo: MockNotesRepository,
+) -> None:
+    """ResumePromptModal: pressing Esc dismisses with False (Start over).
+
+    Args:
+        tui_config: SorterConfig fixture.
+        tui_repo: MockNotesRepository fixture.
+    """
+    app = NotesOSApp(config=tui_config, repo=tui_repo)
+    dismissed_result: list[bool | None] = []
+
+    def _capture(result: bool | None) -> None:
+        dismissed_result.append(result)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        modal = ResumePromptModal(index=3, total=8)
+        await app.push_screen(modal, _capture)
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, ResumePromptModal), (
+            "Expected ResumePromptModal dismissed after Esc"
+        )
+        assert dismissed_result == [False]

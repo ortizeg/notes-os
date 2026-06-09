@@ -345,6 +345,44 @@ class SortSession:
         return entry
 
     # ------------------------------------------------------------------
+    # Resume support (UX-03)
+    # ------------------------------------------------------------------
+
+    def restore_counts(self, moved: int, skipped: int, errors: int) -> None:
+        """Re-seed the running counters from a resumed session (UX-03).
+
+        Called ONCE on resume, before any new ``record_*`` in the resumed run, so
+        the resumed session's final :meth:`summary` reflects the WHOLE session
+        (the counts accumulated before the relaunch PLUS the counts accrued
+        after).  Each value is clamped with ``max(0, n)`` so a malformed saved
+        count can never seed a negative counter (mirrors the ``> 0`` guards in
+        :meth:`pop_undo` / :meth:`record_move_failure`; threat T-15-05).
+
+        This re-seeds the integer tally ONLY.  It deliberately does NOT touch
+        :attr:`_undo_stack` or :attr:`_events`: a resumed session keeps its own
+        fresh undo stack and audit log (you cannot undo an action from a previous,
+        already-closed run), while the restored counters make the final summary
+        whole.
+
+        Args:
+            moved: Restored count of notes moved before the relaunch (clamped to
+                ``>= 0``).
+            skipped: Restored count of notes skipped before the relaunch (clamped
+                to ``>= 0``).
+            errors: Restored count of notes that errored before the relaunch
+                (clamped to ``>= 0``).
+        """
+        self.moved = max(0, moved)
+        self.skipped = max(0, skipped)
+        self.errors = max(0, errors)
+        logger.debug(
+            "Restored session counts: moved=%d skipped=%d errors=%d",
+            self.moved,
+            self.skipped,
+            self.errors,
+        )
+
+    # ------------------------------------------------------------------
     # Summary + log (SESS-02 / SESS-03)
     # ------------------------------------------------------------------
 

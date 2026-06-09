@@ -121,6 +121,93 @@ class ConfirmQuitModal(ModalScreen[bool]):
             self.dismiss(False)
 
 
+# ---------------------------------------------------------------------------
+# ResumePromptModal — shown by the "always ask" resume prompt (UX-03)
+# ---------------------------------------------------------------------------
+
+# Button ids and the prompt template (no magic strings).
+_RESUME_YES_ID: str = "resume-yes"
+_RESUME_NO_ID: str = "resume-no"
+_RESUME_LABEL_ID: str = "resume-prompt-label"
+_RESUME_PROMPT_TEMPLATE: str = (
+    "A saved session was found.\nResume at note {position} of {total}, or start over?"
+)
+
+
+class ResumePromptModal(ModalScreen[bool]):
+    """Two-button "Resume / Start over" prompt for the saved-session check (UX-03).
+
+    Mirrors :class:`ConfirmQuitModal`: it presents a message plus two buttons and
+    is dismissed with ``True`` (user chose to Resume) or ``False`` (user chose to
+    Start over).  Does NOT include ``Header`` or ``Footer`` widgets — those raise
+    ``NoMatches`` in modal context.
+
+    The Wave-2 SortScreen (Plan 15-02) pushes this modal BY INSTANCE (it is not
+    registered in :attr:`NotesOSApp.SCREENS`) with the saved ``index``/``total`` so
+    the prompt can show the 1-based position the session would resume at.
+
+    Bindings:
+        - ``Y`` / ``y`` → Resume (dismiss ``True``).
+        - ``N`` / ``n`` → Start over (dismiss ``False``).
+        - ``Escape`` → Start over (dismiss ``False``).
+
+    Args:
+        index: The 0-based inbox index the session would resume at.  Shown to the
+            user as the 1-based position ``index + 1``.
+        total: The total number of notes in the saved inbox signature.
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("y", "resume", "Resume", show=True),
+        Binding("n", "start_over", "Start over", show=True),
+        Binding("escape", "start_over", "Start over", show=False),
+    ]
+
+    def __init__(self, index: int, total: int) -> None:
+        """Store the saved position so :meth:`compose` can render the prompt.
+
+        Args:
+            index: The 0-based inbox index the session would resume at.
+            total: The total number of notes in the saved inbox signature.
+        """
+        super().__init__()
+        self._index = index
+        self._total = total
+
+    def compose(self) -> ComposeResult:
+        """Lay out the resume prompt and Resume / Start over buttons.
+
+        Yields:
+            Label with the resume prompt (showing the 1-based position), then two
+            Buttons (Resume / Start over).
+        """
+        yield Label(
+            _RESUME_PROMPT_TEMPLATE.format(position=self._index + 1, total=self._total),
+            id=_RESUME_LABEL_ID,
+        )
+        yield Button("Resume", id=_RESUME_YES_ID, variant="primary")
+        yield Button("Start over", id=_RESUME_NO_ID, variant="warning")
+
+    def action_resume(self) -> None:
+        """Dismiss the modal with ``True`` — user chose to resume."""
+        self.dismiss(True)
+
+    def action_start_over(self) -> None:
+        """Dismiss the modal with ``False`` — user chose to start over."""
+        self.dismiss(False)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle Resume / Start over button clicks.
+
+        Args:
+            event: The :class:`~textual.widgets.Button.Pressed` event.
+        """
+        if event.button.id == _RESUME_YES_ID:
+            self.dismiss(True)
+        elif event.button.id == _RESUME_NO_ID:
+            self.dismiss(False)
+
+
 class NotesOSApp(App[None]):
     """Root Textual application for NotesOS.
 
