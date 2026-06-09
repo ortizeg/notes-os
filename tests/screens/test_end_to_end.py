@@ -311,8 +311,7 @@ async def test_end_to_end_home_sort_extract_finish(tmp_path: Path) -> None:
         # Previously this asserted a per-write backup (count grew for note 2);
         # that before-every-write cadence was removed in Phase 12 (BKUP-08).
         assert backup_calls_after_note1 == 1, (
-            f"BKUP-07: exactly one backup before the first write, "
-            f"got {backup_calls_after_note1}"
+            f"BKUP-07: exactly one backup before the first write, got {backup_calls_after_note1}"
         )
         assert spy_manager.create.call_count == backup_calls_after_note1, (
             f"BKUP-07: no additional backup for note 2 in the same session, "
