@@ -47,6 +47,7 @@ from notes_os.screens.sort import (
     _BULK_PAGE_SIZE,
     _BULK_THRESHOLD,
     _CATEGORY_PROMPT,
+    _NOTHING_TO_UNDO,
     _PREVIEW_SKELETON,
     _PREVIEW_SKELETON_CLASS,
     SortScreen,
@@ -1495,3 +1496,277 @@ async def test_drained_requeue_rearms_writer(tui_config: SorterConfig) -> None:
         )
         assert len(sort_screen._write_queue) == 0
         assert sort_screen._writer_active is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 14: undo last action (UX-02)
+# ---------------------------------------------------------------------------
+
+
+async def test_move_then_undo_restores_note_count_and_position(
+    tui_config: SorterConfig,
+) -> None:
+    """UX-02: undo a move — note returns to the inbox, count and position restored.
+
+    Move one note to Archive via 'x' and drain.  Assert ``moved == 1``, the note
+    left the inbox, and ``_index`` advanced to 1.  Press 'U', drain the queued
+    move-back, then assert ``moved == 0``, ``_index == 0``, a move-back to the
+    captured inbox path ``("Notes",)`` is recorded on the inner repo, and the note
+    is back in ``get_inbox_notes()``.  The move-back routes through the Phase-13
+    serialized ``_enqueue_write`` queue (never a synchronous write).
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    # A trailing note keeps the session OPEN after the first move (a single-note
+    # inbox would finish the session and set _inbox_empty=True, where U is a no-op).
+    notes = [_make_archive_note("undo-move-1"), _make_archive_note("undo-move-tail")]
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, notes)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        # Move the note and drain the off-thread write.
+        await pilot.press("x")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert sort_screen._session.summary().moved == 1
+        assert sort_screen._index == 1
+        assert "undo-move-1" not in {n.id for n in mock_inner.get_inbox_notes()}
+
+        # Undo the move — enqueues a move-back; drain it.
+        await pilot.press("u")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Count + position reversed.
+        assert sort_screen._session.summary().moved == 0, "undo must decrement moved"
+        assert sort_screen._index == 0, f"undo must step _index back, got {sort_screen._index}"
+        assert sort_screen._router_state is RouterState.AWAIT_CATEGORY
+
+        # A move-back to the captured inbox path was queued + written.
+        assert ("undo-move-1", ("Notes",)) in mock_inner.moves, (
+            f"move-back to the inbox must be recorded, got {mock_inner.moves!r}"
+        )
+
+        # The note is back in the inbox (move-back restored membership via the mock).
+        assert "undo-move-1" in {n.id for n in mock_inner.get_inbox_notes()}, (
+            "the undone note must be back in the inbox"
+        )
+
+
+async def test_skip_then_undo_steps_back_no_write(tui_config: SorterConfig) -> None:
+    """UX-02: undo a skip — pointer steps back, ``skipped`` decrements, NO write.
+
+    Skip one note via 's' (``_index`` 0→1, ``skipped == 1``).  Press 'U' and pause.
+    Assert ``skipped == 0``, ``_index == 0``, router back at AWAIT_CATEGORY, and
+    NO new entry on ``mock_inner.moves`` (a skip-undo writes nothing).
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    # A trailing note keeps the session OPEN after the skip (a single-note inbox
+    # would finish and set _inbox_empty=True, where U is a no-op).
+    notes = [
+        Note(id="undo-skip-1", title="Skip Note", body="<p>s</p>", preview="s"),
+        Note(id="undo-skip-tail", title="Tail", body="<p>t</p>", preview="t"),
+    ]
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, notes)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        await pilot.press("s")
+        await pilot.pause()
+        assert sort_screen._session.summary().skipped == 1
+        assert sort_screen._index == 1
+
+        await pilot.press("u")
+        await pilot.pause()
+
+        assert sort_screen._session.summary().skipped == 0, "undo must decrement skipped"
+        assert sort_screen._index == 0, f"undo must step _index back, got {sort_screen._index}"
+        assert sort_screen._router_state is RouterState.AWAIT_CATEGORY
+        assert mock_inner.moves == [], f"skip-undo must write nothing, got {mock_inner.moves!r}"
+
+
+async def test_undo_repeatable_to_session_start(tui_config: SorterConfig) -> None:
+    """UX-02: undo is repeatable LIFO to session start; a third press is a no-op.
+
+    Move note 0 (drain), skip note 1 (``_index == 2``).  Press 'U' (undo the skip
+    → ``_index 1``, ``skipped 0``).  Press 'U' (undo the move → ``_index 0``,
+    ``moved 0``, move-back enqueued; drain).  Press 'U' a THIRD time → no-op:
+    ``_index`` stays 0 and counters are unchanged.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    # A trailing note keeps the session OPEN after move-0 + skip-1 (otherwise the
+    # session finishes at index 2 and _inbox_empty=True blocks U).
+    notes = [
+        _make_archive_note("rep-move-0"),
+        Note(id="rep-skip-1", title="Skip", body="<p>s</p>", preview="s"),
+        Note(id="rep-tail-2", title="Tail", body="<p>t</p>", preview="t"),
+    ]
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, notes)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        # Move note 0, then skip note 1 → index advances to 2.
+        await pilot.press("x")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert sort_screen._index == 2
+        assert sort_screen._session.summary().moved == 1
+        assert sort_screen._session.summary().skipped == 1
+
+        # Undo the skip (LIFO top) → index 1, skipped 0.
+        await pilot.press("u")
+        await pilot.pause()
+        assert sort_screen._index == 1
+        assert sort_screen._session.summary().skipped == 0
+        assert sort_screen._session.summary().moved == 1
+
+        # Undo the move → index 0, moved 0, move-back enqueued; drain it.
+        await pilot.press("u")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert sort_screen._index == 0
+        assert sort_screen._session.summary().moved == 0
+        assert ("rep-move-0", ("Notes",)) in mock_inner.moves
+
+        # Third undo → nothing left: no-op (index + counters unchanged).
+        await pilot.press("u")
+        await pilot.pause()
+        assert sort_screen._index == 0, "a third undo at session start must not move the pointer"
+        assert sort_screen._session.summary().moved == 0
+        assert sort_screen._session.summary().skipped == 0
+
+
+async def test_undo_empty_stack_is_noop_with_hint(tui_config: SorterConfig) -> None:
+    """UX-02: ``U`` with an empty undo stack is a no-op and surfaces the hint.
+
+    Seed one note, do nothing, press 'U'.  Assert ``_index``/``moved``/``skipped``
+    are all unchanged and that ``notify`` was called with :data:`_NOTHING_TO_UNDO`
+    (the brief no-op hint).  ``screen.notify`` is replaced with a ``MagicMock`` spy
+    (the suite's existing spy style) so the hint assertion is deterministic.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = Note(id="undo-empty-1", title="Note", body="<p>n</p>", preview="n")
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, [note])
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        notify_spy = MagicMock()
+        sort_screen.notify = notify_spy  # type: ignore[method-assign]
+
+        await pilot.press("u")
+        await pilot.pause()
+
+        # No-op: nothing changed.
+        assert sort_screen._index == 0
+        assert sort_screen._session.summary().moved == 0
+        assert sort_screen._session.summary().skipped == 0
+        assert isinstance(app.screen, SortScreen), "empty-stack undo must not crash"
+
+        # The brief hint was surfaced.
+        notify_spy.assert_called_once_with(_NOTHING_TO_UNDO)
+
+
+async def test_undo_move_back_failure_surfaced_without_corruption(
+    tui_config: SorterConfig,
+) -> None:
+    """UX-02 / T-14-05: a failed undo move-back is surfaced without crash or corruption.
+
+    Move one note (drain).  Then GATE the move-back's ``move_note`` to raise
+    ``NotesMoveError``.  Press 'U', release the gate, drain.  Assert the app is
+    still a SortScreen (no crash), counts are non-negative and sane, and the failed
+    move-back was recorded in ``_failed_moves`` via the EXISTING ``_on_write_failed``
+    path (no bespoke failure handling).  Mirrors
+    ``test_failed_write_surfaced_recorded_and_note_retained``.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    # A trailing note keeps the session OPEN after the move (so U is dispatched).
+    notes = [_make_archive_note("undo-fail-1"), _make_archive_note("undo-fail-tail")]
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, notes)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        # Move the note successfully and drain.
+        await pilot.press("x")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert sort_screen._session.summary().moved == 1
+
+        # Gate the move-back so it fails deterministically off-thread.
+        gate = threading.Event()
+
+        def gated_failing_move(note_id: str, folder_path: FolderPath) -> None:
+            gate.wait(timeout=5.0)
+            raise NotesMoveError(note_id)
+
+        mock_inner.move_note = gated_failing_move  # type: ignore[method-assign]
+
+        # Undo → enqueues the move-back; release the gate and drain.
+        await pilot.press("u")
+        await pilot.pause()
+        # pop_undo already decremented moved to 0 optimistically.
+        assert sort_screen._session.summary().moved == 0
+
+        gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # No crash; counts non-negative and sane.
+        assert isinstance(app.screen, SortScreen), "undo move-back failure must not crash the TUI"
+        summary = sort_screen._session.summary()
+        assert summary.moved >= 0, f"moved must stay non-negative, got {summary.moved}"
+        assert summary.skipped >= 0
+
+        # The failed move-back surfaced through the EXISTING _on_write_failed path.
+        assert len(sort_screen._failed_moves) == 1, "failed move-back must be tracked"
+        assert sort_screen._failed_moves[0][0] == "undo-fail-1"
