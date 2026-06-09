@@ -371,3 +371,156 @@ class TestRecordMoveFailure:
         # The earlier move to Projects survives; the later one is the error.
         assert "Projects" in content
         assert "second move failed" in content
+
+
+# ---------------------------------------------------------------------------
+# Phase 14-01 — UndoEntry + SortSession undo stack (UX-02)
+# ---------------------------------------------------------------------------
+
+
+class TestUndoStackInitialState:
+    """A fresh session has an empty undo stack — pop_undo returns None."""
+
+    def test_pop_undo_on_empty_returns_none(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        assert session.pop_undo() is None
+
+    def test_pop_undo_on_empty_leaves_counters_at_zero(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.pop_undo()
+        assert session.moved == 0
+        assert session.skipped == 0
+        assert session.errors == 0
+
+
+class TestUndoEntryModel:
+    """UndoEntry is a frozen Pydantic V2 value object carrying the undo context."""
+
+    def test_undo_entry_is_frozen(self) -> None:
+        import pydantic
+
+        from notes_os.sorter.session import UndoEntry
+
+        entry = UndoEntry(note_id="n1", kind="move", index=0)
+        with pytest.raises(pydantic.ValidationError):
+            entry.note_id = "other"  # type: ignore[misc]
+
+
+class TestUndoStackPushAndPop:
+    """record_move/record_skip push undo entries; pop_undo reverses LIFO."""
+
+    def test_record_move_pushes_undo_entry_with_full_context(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("n1", ("Projects",), source_path=("Notes",), index=3)
+        assert session.moved == 1
+        entry = session.pop_undo()
+        assert entry is not None
+        assert entry.note_id == "n1"
+        assert entry.kind == "move"
+        assert entry.source_path == ("Notes",)
+        assert entry.dest_path == ("Projects",)
+        assert entry.index == 3
+        assert session.moved == 0
+
+    def test_record_skip_pushes_undo_entry(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_skip("n2", index=4)
+        assert session.skipped == 1
+        entry = session.pop_undo()
+        assert entry is not None
+        assert entry.kind == "skip"
+        assert entry.source_path is None
+        assert entry.dest_path is None
+        assert entry.index == 4
+        assert session.skipped == 0
+
+    def test_pop_undo_is_lifo_and_unbounded(self) -> None:
+        """record move, skip, move -> pop returns most-recent first, then None."""
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("a", ("Projects",), index=0)
+        session.record_skip("b", index=1)
+        session.record_move("c", ("Areas",), index=2)
+
+        first = session.pop_undo()
+        second = session.pop_undo()
+        third = session.pop_undo()
+        assert first is not None and first.note_id == "c"
+        assert second is not None and second.note_id == "b"
+        assert third is not None and third.note_id == "a"
+        assert session.pop_undo() is None
+
+    def test_pop_undo_guards_moved_at_zero(self) -> None:
+        """A move entry whose counter was already reconciled never goes negative."""
+        from notes_os.sorter.session import SortSession, UndoEntry
+
+        session = SortSession()
+        # Inject an entry directly with the counter at zero (defensive guard path).
+        session._undo_stack.append(
+            UndoEntry(note_id="x", kind="move", dest_path=("Projects",), index=0)
+        )
+        assert session.moved == 0
+        session.pop_undo()
+        assert session.moved == 0
+
+    def test_pop_undo_guards_skipped_at_zero(self) -> None:
+        from notes_os.sorter.session import SortSession, UndoEntry
+
+        session = SortSession()
+        session._undo_stack.append(UndoEntry(note_id="x", kind="skip", index=0))
+        assert session.skipped == 0
+        session.pop_undo()
+        assert session.skipped == 0
+
+
+class TestUndoStackErroredEventRule:
+    """record_error pushes nothing; record_move_failure pops the reconciled move."""
+
+    def test_record_error_pushes_no_undo_entry(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_error("e1", "boom")
+        assert session.pop_undo() is None
+
+    def test_move_failure_pops_reconciled_entry(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("n1", ("Projects",), source_path=("Notes",), index=0)
+        session.record_move_failure("n1", "timeout")
+        # The failed move is NOT undoable.
+        assert session.pop_undo() is None
+        assert session.moved == 0
+        assert session.errors == 1
+
+    def test_move_failure_pops_only_matching_move(self) -> None:
+        """move(a), move(b), fail(a): pop returns b, then None."""
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("a", ("Projects",), index=0)
+        session.record_move("b", ("Areas",), index=1)
+        session.record_move_failure("a", "fail")
+
+        entry = session.pop_undo()
+        assert entry is not None
+        assert entry.note_id == "b"
+        assert session.pop_undo() is None
+
+    def test_move_failure_with_no_prior_move_leaves_stack_empty(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move_failure("ghost", "boom")
+        assert session.pop_undo() is None
+        assert session.errors == 1
