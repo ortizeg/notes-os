@@ -72,6 +72,14 @@ Screen {
     color: $text;
 }
 
+/* Skeleton placeholder shown while a note's body is still loading (UX-01).
+   Muted, dim text distinguishes the "coming" placeholder from a loaded
+   preview; the class is added/removed by SortScreen._render_current_note. */
+#note-preview.preview-loading {
+    color: $text-muted;
+    text-style: dim;
+}
+
 #prompt {
     width: 80%;
     height: auto;

@@ -43,7 +43,13 @@ from notes_os.app import NotesOSApp
 from notes_os.backup import BackingUpNotesRepository, BackupManager
 from notes_os.backup_models import Backup
 from notes_os.exceptions import BackupError, NotesMoveError
-from notes_os.screens.sort import _BULK_PAGE_SIZE, _BULK_THRESHOLD, SortScreen
+from notes_os.screens.sort import (
+    _BULK_PAGE_SIZE,
+    _BULK_THRESHOLD,
+    _PREVIEW_SKELETON,
+    _PREVIEW_SKELETON_CLASS,
+    SortScreen,
+)
 from notes_os.sorter.models import Note, ParaStructure
 from notes_os.sorter.router import RouterState
 
@@ -1011,6 +1017,79 @@ async def test_cold_note_resolves_via_get_note_fallback(
         preview_text = str(sort_screen.query_one("#note-preview", Static).render())
         assert "preview 0" in preview_text, preview_text
         assert "Loading preview" not in preview_text, preview_text
+
+
+# ---------------------------------------------------------------------------
+# Phase 11: dim skeleton placeholder while the body loads (UX-01)
+# ---------------------------------------------------------------------------
+
+
+async def test_skeleton_shown_until_body_lands(tui_config: SorterConfig) -> None:
+    """UX-01: a not-yet-cached note shows the dim skeleton; the real preview replaces it.
+
+    Force the cache-miss path so the FIRST render happens with the current note's
+    body NOT yet cached: stub ``get_inbox_note_bodies`` to return ``[]`` (the bulk
+    page never lands) and GATE the by-id ``get_note`` fallback on a
+    ``threading.Event`` so the skeleton state is observable deterministically.
+
+    Pre-load (gate held): ``#note-preview`` renders ``_PREVIEW_SKELETON`` (and NOT
+    the old "Loading preview" text) and the Static carries the
+    ``_PREVIEW_SKELETON_CLASS`` (``preview-loading``) CSS class.
+
+    Post-load (gate released, fallback drains): the Static no longer has the
+    ``preview-loading`` class and ``#note-preview`` shows the real preview text.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    notes = _make_bulk_notes(1)
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, notes)
+
+    # Bulk page never arrives → render hits the by-id fallback (cache miss).
+    mock_inner.get_inbox_note_bodies = lambda offset, count: []  # type: ignore[method-assign]
+
+    # Gate the single-note fallback so the skeleton is observable before the body
+    # lands (deterministic; the worker would otherwise drain during the pause).
+    gate = threading.Event()
+    real_get_note = mock_inner.get_note
+
+    def gated_get_note(note_id: str) -> Note:
+        gate.wait(timeout=5.0)
+        return real_get_note(note_id)
+
+    mock_inner.get_note = gated_get_note  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+        # Do NOT wait_for_complete — the gated fallback is still in flight, so the
+        # current note's body is withheld and the skeleton must be showing.
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        preview = sort_screen.query_one("#note-preview", Static)
+
+        # Pre-load: dim skeleton + preview-loading class, NOT the old loading text.
+        assert preview.has_class(_PREVIEW_SKELETON_CLASS), (
+            "the #note-preview Static must carry the preview-loading class while loading"
+        )
+        skeleton_text = str(preview.render())
+        assert _PREVIEW_SKELETON in skeleton_text, skeleton_text
+        assert "Loading preview" not in skeleton_text, skeleton_text
+
+        # Release the gate and let the by-id fallback resolve the real body.
+        gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Post-load: class removed, real preview shown (never dim once loaded).
+        assert not preview.has_class(_PREVIEW_SKELETON_CLASS), (
+            "the preview-loading class must be removed once the real preview lands"
+        )
+        loaded_text = str(preview.render())
+        assert "preview 0" in loaded_text, loaded_text
+        assert _PREVIEW_SKELETON not in loaded_text, loaded_text
 
 
 # ---------------------------------------------------------------------------
