@@ -198,6 +198,37 @@ class NotesRepositoryProtocol(Protocol):
         """
         ...
 
+    def get_inbox_note_bodies(self, offset: int, count: int) -> list[Note]:
+        """Return a contiguous page of fully-populated inbox notes.
+
+        Fetches the slice ``[offset : offset + count]`` of the inbox notes in
+        folder order via a single bulk AppleScript range read, returning each
+        note with all four fields populated (``id``, ``title``, ``body``,
+        ``preview``).  This is the bulk replacement for the per-note
+        ``get_note`` preview path: one Apple Event per page instead of one per
+        note.
+
+        The returned page is in folder order and id-aligned to the
+        corresponding slice of :meth:`get_inbox_note_refs` — both read
+        ``notes of inbox`` as their ordering source, so index ``i`` of this
+        page corresponds to index ``offset + i`` of ``get_inbox_note_refs()``.
+
+        Args:
+            offset: 0-based start index into the inbox notes in folder order.
+            count: Number of notes to fetch starting at *offset*.
+
+        Returns:
+            A list of :class:`~notes_os.sorter.models.Note` objects, in folder
+            order, id-aligned to ``get_inbox_note_refs()``.  Returns an empty
+            list when the page is empty: ``count <= 0``, *offset* past the end
+            of the inbox, or an empty inbox.
+
+        Raises:
+            NotesError: If the osascript subprocess exits with a non-zero
+                return code.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # HTML stripper (BRDG-05)
@@ -519,6 +550,98 @@ end tell"""
             body=body,
             preview=_strip_html(body, self._config.preview_length),
         )
+
+    def get_inbox_note_bodies(self, offset: int, count: int) -> list[Note]:
+        """Return a contiguous page of fully-populated inbox notes.
+
+        Issues exactly ONE ``osascript`` call that reads the contiguous slice
+        ``items (offset+1) thru (offset+count) of (notes of inbox)`` — sharing
+        the ``notes of inbox`` ordering source with :meth:`get_inbox_note_refs`
+        so the returned page is id-aligned to the corresponding ref slice.
+        AppleScript is 1-based, so a Python *offset* maps to AppleScript index
+        ``offset + 1`` and the inclusive end is ``offset + count``; the script
+        clamps that end to ``count of noteList`` so an over-long *count* (or an
+        *offset* past the end) yields empty output rather than an error.
+
+        Each note is emitted on the wire as
+        ``<id> _FIELD_SEP <name> _FIELD_SEP <body>`` with records joined by
+        ``_RECORD_SEP`` — identical to :meth:`get_inbox_notes`, so the same
+        parse loop applies (id/title stripped, body kept raw, ``preview`` via
+        :func:`_strip_html`).
+
+        Args:
+            offset: 0-based start index into the inbox notes in folder order.
+            count: Number of notes to fetch starting at *offset*.
+
+        Returns:
+            A list of :class:`~notes_os.sorter.models.Note` objects, in folder
+            order, id-aligned to ``get_inbox_note_refs()``.  Returns an empty
+            list when ``count <= 0``, *offset* is past the end of the inbox, or
+            the inbox is empty.
+
+        Raises:
+            NotesError: On non-zero osascript exit code.
+        """
+        # Guard the empty page in Python — a non-positive count would build an
+        # invalid AppleScript range (start > end), so short-circuit before any
+        # osascript call.  The "offset past the end" case is handled by the
+        # AppleScript clamp returning empty stdout.
+        if count <= 0:
+            return []
+
+        inbox = self._config.inbox_folder.replace('"', '""')  # AppleScript-escape double-quotes
+        # offset/count are ints from the caller — interpolated as numeric
+        # literals; only the inbox name is a dynamic string needing escaping.
+        start_idx = offset + 1  # AppleScript is 1-based
+        end_idx = offset + count  # inclusive end before clamping
+        script = f"""\
+tell application "Notes"
+    set fs to (ASCII character 31)
+    set rs to (ASCII character 30)
+    set inbox to folder "{inbox}"
+    set noteList to notes of inbox
+    set lastIdx to {end_idx}
+    if lastIdx > (count of noteList) then set lastIdx to (count of noteList)
+    set output to ""
+    repeat with i from {start_idx} to lastIdx
+        set noteID to id of item i of noteList
+        set noteTitle to name of item i of noteList
+        set noteBody to body of item i of noteList
+        if output is "" then
+            set output to noteID & fs & noteTitle & fs & noteBody
+        else
+            set output to output & rs & noteID & fs & noteTitle & fs & noteBody
+        end if
+    end repeat
+    return output
+end tell"""
+        stdout = self._run_osascript(script)
+        if not stdout or not stdout.strip():
+            return []
+
+        notes: list[Note] = []
+        for record in stdout.split(_RECORD_SEP):
+            # Do NOT strip the record: trailing _FIELD_SEP marks an empty body field.
+            # Only skip records that contain no non-whitespace characters at all.
+            if not record or not record.strip():
+                continue
+            parts = record.split(_FIELD_SEP, 2)
+            if len(parts) != 3:
+                logger.warning(
+                    "Skipping malformed note record (expected 3 fields, got %d)",
+                    len(parts),
+                )
+                continue
+            note_id, title, body = parts
+            notes.append(
+                Note(
+                    id=note_id.strip(),
+                    title=title.strip(),
+                    body=body,
+                    preview=_strip_html(body, self._config.preview_length),
+                )
+            )
+        return notes
 
     def count_inbox_notes(self) -> int:
         """Return the number of notes in the configured inbox folder.

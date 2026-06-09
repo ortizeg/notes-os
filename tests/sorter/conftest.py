@@ -101,6 +101,23 @@ class MockNotesRepository:
                 return note
         raise NotesMoveError(note_id)
 
+    def get_inbox_note_bodies(self, offset: int, count: int) -> list[Note]:
+        """Return a folder-ordered slice of the seeded inbox notes.
+
+        Mirrors :meth:`get_inbox_note_refs` ordering (both derive from
+        ``self._inbox``) so the returned page is id-aligned to it.  Python
+        slicing already clamps out-of-range offsets/counts: a *count* of 0, an
+        *offset* past the end, or an empty inbox all yield ``[]``.
+
+        Args:
+            offset: 0-based start index into the in-memory inbox.
+            count: Number of notes to return starting at *offset*.
+
+        Returns:
+            A new list with the requested folder-ordered slice of inbox notes.
+        """
+        return list(self._inbox[offset : offset + count])
+
     def count_inbox_notes(self) -> int:
         """Return the count of notes currently in the in-memory inbox.
 

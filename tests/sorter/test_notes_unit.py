@@ -1051,3 +1051,223 @@ class TestCountInboxNotes:
             pytest.raises(NotesError),
         ):
             repo.count_inbox_notes()
+
+
+# ---------------------------------------------------------------------------
+# get_inbox_note_bodies — subprocess mocked (Plan 10-01 bulk paged read)
+# ---------------------------------------------------------------------------
+
+
+class TestGetInboxNoteBodies:
+    """Tests for AppleScriptNotesRepository.get_inbox_note_bodies.
+
+    The bulk paged body-fetch bridge shares the get_inbox_notes wire format
+    (id, title, body records joined by _RECORD_SEP), so _inbox_stdout is reused
+    for fake stdout.  Every test patches subprocess.run — no osascript spawns.
+    """
+
+    def test_happy_path_multi_record_single_call(self) -> None:
+        """A multi-record page parses to fully-populated Notes in exactly one osascript call."""
+        repo = _default_repo()
+        stdout = _inbox_stdout(
+            [
+                ("id1", "First Note", "<div>Hello</div>"),
+                ("id2", "Second Note", "<p>World &amp; more</p>"),
+            ]
+        )
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ) as mock_run:
+            notes = repo.get_inbox_note_bodies(0, 2)
+
+        assert mock_run.call_count == 1  # exactly ONE range read per page
+        assert len(notes) == 2
+        assert notes[0].id == "id1"
+        assert notes[0].title == "First Note"
+        assert notes[0].body == "<div>Hello</div>"
+        assert notes[0].preview == "Hello"
+        assert notes[1].id == "id2"
+        assert notes[1].title == "Second Note"
+        assert notes[1].preview == "World & more"
+
+    def test_empty_page_count_zero_skips_osascript(self) -> None:
+        """count == 0 returns [] WITHOUT calling osascript (invalid range guarded in Python)."""
+        repo = _default_repo()
+        with patch("notes_os.sorter.notes.subprocess.run") as mock_run:
+            notes = repo.get_inbox_note_bodies(0, 0)
+            mock_run.assert_not_called()
+
+        assert notes == []
+
+    def test_negative_count_skips_osascript(self) -> None:
+        """A negative count is also guarded and returns [] without calling osascript."""
+        repo = _default_repo()
+        with patch("notes_os.sorter.notes.subprocess.run") as mock_run:
+            notes = repo.get_inbox_note_bodies(5, -3)
+            mock_run.assert_not_called()
+
+        assert notes == []
+
+    def test_empty_stdout_returns_empty_list(self) -> None:
+        """Empty stdout (offset past end / empty inbox) returns an empty list."""
+        repo = _default_repo()
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=""),
+        ):
+            notes = repo.get_inbox_note_bodies(100, 10)
+
+        assert notes == []
+
+    def test_whitespace_only_stdout_returns_empty_list(self) -> None:
+        """Whitespace-only stdout returns an empty list."""
+        repo = _default_repo()
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout="   \n  "),
+        ):
+            notes = repo.get_inbox_note_bodies(0, 10)
+
+        assert notes == []
+
+    def test_malformed_record_is_skipped(self) -> None:
+        """A record with only two fields is skipped; valid records still parsed."""
+        repo = _default_repo()
+        malformed = f"id_bad{_FIELD_SEP}Title Only"  # missing the body field
+        good = _inbox_stdout([("id_good", "Good Note", "<p>ok</p>")])
+        stdout = f"{malformed}{_RECORD_SEP}{good}"
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            notes = repo.get_inbox_note_bodies(0, 2)
+
+        assert len(notes) == 1
+        assert notes[0].id == "id_good"
+
+    def test_trailing_record_sep_empty_record_skipped(self) -> None:
+        """A trailing _RECORD_SEP yields an empty record that is skipped."""
+        repo = _default_repo()
+        good = f"id1{_FIELD_SEP}Title{_FIELD_SEP}body"
+        stdout = good + _RECORD_SEP  # trailing separator → empty trailing record
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            notes = repo.get_inbox_note_bodies(0, 1)
+
+        assert len(notes) == 1
+        assert notes[0].id == "id1"
+
+    def test_note_with_empty_body_yields_empty_preview(self) -> None:
+        """A note with an empty body (trailing _FIELD_SEP) yields preview '' and is not skipped."""
+        repo = _default_repo()
+        # Trailing _FIELD_SEP marks the empty body; must NOT be stripped before split.
+        stdout = f"id_empty{_FIELD_SEP}Empty Body Note{_FIELD_SEP}"
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            notes = repo.get_inbox_note_bodies(0, 1)
+
+        assert len(notes) == 1
+        assert notes[0].id == "id_empty"
+        assert notes[0].body == ""
+        assert notes[0].preview == ""
+
+    def test_preview_truncated_to_config_length(self) -> None:
+        """Preview is truncated to BridgeConfig.preview_length."""
+        cfg = BridgeConfig(preview_length=50)
+        repo = AppleScriptNotesRepository(cfg)
+        body = "A" * 200
+        stdout = _inbox_stdout([("id1", "Long Note", body)])
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            notes = repo.get_inbox_note_bodies(0, 1)
+
+        assert len(notes[0].preview) == 50
+
+    def test_ordering_and_id_alignment_preserved(self) -> None:
+        """A 3-record page returns ids in the same order they appear in stdout (folder order)."""
+        repo = _default_repo()
+        stdout = _inbox_stdout(
+            [
+                ("id1", "Note One", "<p>one</p>"),
+                ("id2", "Note Two", "<p>two</p>"),
+                ("id3", "Note Three", "<p>three</p>"),
+            ]
+        )
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ):
+            notes = repo.get_inbox_note_bodies(0, 3)
+
+        assert [n.id for n in notes] == ["id1", "id2", "id3"]
+
+    def test_inbox_name_double_quote_is_escaped(self) -> None:
+        """A double-quote in the inbox name is AppleScript-escaped (doubled) in the script."""
+        repo = AppleScriptNotesRepository(BridgeConfig(inbox_folder='In"box'))
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=""),
+        ) as mock_run:
+            repo.get_inbox_note_bodies(0, 5)
+
+        script = mock_run.call_args[0][0][2]  # ["osascript", "-e", script]
+        assert 'In""box' in script  # doubled-quote escaping (T-10-01 mitigation)
+
+    def test_script_contains_computed_one_based_range(self) -> None:
+        """The generated script references the 1-based start (offset+1) and the offset+count end."""
+        repo = _default_repo()
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=""),
+        ) as mock_run:
+            # offset=2, count=3 → AppleScript start index 3, inclusive end 5.
+            repo.get_inbox_note_bodies(2, 3)
+
+        script = mock_run.call_args[0][0][2]
+        assert "repeat with i from 3 to lastIdx" in script  # offset+1 == 3
+        assert "set lastIdx to 5" in script  # offset+count == 5
+        assert "notes of inbox" in script  # shared ordering source with get_inbox_note_refs
+
+    def test_single_osascript_call_for_a_page(self) -> None:
+        """Fetching a page issues exactly one osascript call regardless of page size."""
+        repo = _default_repo()
+        stdout = _inbox_stdout([(f"id{i}", f"Note {i}", "<p>x</p>") for i in range(10)])
+        with patch(
+            "notes_os.sorter.notes.subprocess.run",
+            return_value=_make_run_result(stdout=stdout),
+        ) as mock_run:
+            notes = repo.get_inbox_note_bodies(0, 10)
+
+        assert mock_run.call_count == 1
+        assert len(notes) == 10
+
+    def test_mock_repo_returns_ordered_slice_without_subprocess(
+        self,
+        mock_repo: MockNotesRepository,
+        sample_notes: list[Note],
+    ) -> None:
+        """MockNotesRepository.get_inbox_note_bodies returns seeded notes in order; no subprocess."""
+        repo: NotesRepositoryProtocol = mock_repo  # type: ignore[assignment]
+
+        with patch("notes_os.sorter.notes.subprocess.run") as mock_run:
+            notes = repo.get_inbox_note_bodies(0, 10)
+            mock_run.assert_not_called()
+
+        assert [n.id for n in notes] == [n.id for n in sample_notes]
+
+    def test_mock_repo_slice_is_id_aligned_to_refs(
+        self,
+        mock_repo: MockNotesRepository,
+    ) -> None:
+        """The mock's body slice is id-aligned to the corresponding get_inbox_note_refs slice."""
+        bodies = mock_repo.get_inbox_note_bodies(1, 2)
+        refs = mock_repo.get_inbox_note_refs()
+
+        assert [n.id for n in bodies] == [r.id for r in refs[1:3]]
