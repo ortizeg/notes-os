@@ -16,4 +16,13 @@
 **Success criteria:** see `.planning/milestones/v3.0-speed-triage-ux-ROADMAP.md` › Phase 15.
 **Design:** `.planning/SPEC-speed-and-triage-ux.md` › Phase 6.
 
-**Plan next:** `/gsd-plan-phase 15`
+## Plans (2 plans · 2 waves)
+
+- [ ] `15-01-PLAN.md` (wave 1) — UI-agnostic persistence: frozen `SessionState` +
+  `ResumeStore` (atomic save, None-safe load, clear), `SortSession.restore_counts`,
+  `ResumePromptModal`. Unit-tested without Textual.
+- [ ] `15-02-PLAN.md` (wave 2, depends on 15-01) — SortScreen wiring: `ResumeStore` DI seam,
+  save points (advance + leave-mid-session), on-mount always-ask resume decision, clear on
+  finish/start-over. Pilot-tested.
+
+**Execute next:** `/gsd-execute-phase 15`
