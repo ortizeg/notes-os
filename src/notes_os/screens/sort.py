@@ -145,6 +145,19 @@ _BULK_THRESHOLD: int = 250
 # Locked default from SPEC §6.
 _BULK_PAGE_SIZE: int = 200
 
+# Dim, multi-line skeleton placeholder rendered into ``#note-preview`` while the
+# current note's body is not yet cached (UX-01).  A few short lines of a block
+# glyph read as "coming," not "stuck" — it replaces the old single-note loading
+# text placeholder.  Rendered as literal text (the Static is ``markup=False``);
+# the dim appearance is CSS-driven via the ``preview-loading`` class, not in this
+# string.  Named constant per CLAUDE.md no-magic-strings; the test imports it.
+_PREVIEW_SKELETON: str = "░░░░░░░░░░░░░░░░\n░░░░░░░░░░░░\n░░░░░░░░░░░░░░"
+# CSS class toggled on the ``#note-preview`` Static: added while the skeleton
+# shows, removed once the real preview lands so a loaded note is never dim.
+# Named constant so the class string is not duplicated between the add/remove
+# call sites; keyed to the ``#note-preview.preview-loading`` rule in app.tcss.
+_PREVIEW_SKELETON_CLASS: str = "preview-loading"
+
 
 class SortScreen(Screen[None]):
     """Inbox triage screen that drives the Router via Textual key events.
@@ -163,9 +176,11 @@ class SortScreen(Screen[None]):
 
     Body loading is a background paged bulk load (see the module docstring):
     after refs land, ``_load_body_page`` streams bodies into ``_note_cache``.
-    When the screen renders a note whose body is not yet cached it shows
-    "Loading preview…" and falls back to a single-note ``get_note`` fetch via
-    :meth:`_get_or_kick_note`, updating the preview when that fetch completes.
+    When the screen renders a note whose body is not yet cached it shows the dim
+    :data:`_PREVIEW_SKELETON` placeholder (with the ``preview-loading`` CSS class)
+    and falls back to a single-note ``get_note`` fetch via
+    :meth:`_get_or_kick_note`, swapping in the real preview (and removing the
+    class) when that fetch completes.
 
     All live data comes from ``self.app.repo`` (the backup-wrapped repository
     from the NotesOSApp DI seam) and ``self.app.app_config``.
@@ -1159,9 +1174,13 @@ class SortScreen(Screen[None]):
         """Update the four Static widgets to reflect the current note and state.
 
         Shows the note title from the ref (always available immediately) and
-        the preview from the full Note if loaded, or a "Loading preview…"
-        placeholder while the body-load worker is running.  Also kicks off
-        the body-load worker if this is the first render for the current note.
+        the preview from the full Note if loaded, or the dim
+        :data:`_PREVIEW_SKELETON` placeholder while the body-load worker is
+        running.  While the skeleton shows, the ``#note-preview`` Static carries
+        the :data:`_PREVIEW_SKELETON_CLASS` (``preview-loading``) CSS class so it
+        renders muted; the moment the real preview lands the class is removed so a
+        loaded note is never dim.  Also kicks off the body-load worker if this is
+        the first render for the current note.
         """
         ref = self._current_ref()
         if ref is None:
@@ -1174,11 +1193,15 @@ class SortScreen(Screen[None]):
         if self._current_note is None:
             self._current_note = self._get_or_kick_note(ref.id, self._index)
 
+        preview = self.query_one("#note-preview", Static)
         if self._current_note is not None:
-            preview_text = self._current_note.preview or "(no preview)"
+            # Body cached — show the real preview and drop the dim skeleton class.
+            preview.remove_class(_PREVIEW_SKELETON_CLASS)
+            preview.update(self._current_note.preview or "(no preview)")
         else:
-            preview_text = "Loading preview…"
-        self.query_one("#note-preview", Static).update(preview_text)
+            # Body not yet cached — show the dim skeleton placeholder.
+            preview.add_class(_PREVIEW_SKELETON_CLASS)
+            preview.update(_PREVIEW_SKELETON)
 
         if self._router_state == RouterState.AWAIT_CATEGORY:
             self.query_one("#prompt", Static).update(_CATEGORY_PROMPT)
