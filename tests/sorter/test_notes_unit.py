@@ -1231,9 +1231,15 @@ class TestGetInboxNoteBodies:
             repo.get_inbox_note_bodies(2, 3)
 
         script = mock_run.call_args[0][0][2]
-        assert "repeat with i from 3 to lastIdx" in script  # offset+1 == 3
         assert "set lastIdx to 5" in script  # offset+count == 5
         assert "notes of inbox" in script  # shared ordering source with get_inbox_note_refs
+        # Bulk list reads over a 3-thru-5 range (offset+1 == 3), NOT a per-note
+        # `item i of (notes of inbox)` loop — the per-note form re-resolves the
+        # Notes specifier on every property access and measured ~60s/110 notes.
+        assert "notes 3 thru lastIdx of inbox" in script  # offset+1 == 3
+        assert "id of notes 3 thru lastIdx of inbox" in script
+        assert "body of notes 3 thru lastIdx of inbox" in script
+        assert "item i of noteList" not in script  # the slow per-note idiom is gone
 
     def test_single_osascript_call_for_a_page(self) -> None:
         """Fetching a page issues exactly one osascript call regardless of page size."""
