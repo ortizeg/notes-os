@@ -54,6 +54,10 @@ class MockNotesRepository:
         self._structure: ParaStructure = structure
         self.moves: list[tuple[str, tuple[str, ...]]] = []
         self.created_folders: list[tuple[str, ...]] = []
+        # Notes moved OUT of the inbox (id → Note).  Tracked so a subsequent
+        # move of the same id models an undo move-back: the note is RE-ADDED to
+        # the inbox (UX-02 / B1).  See ``move_note`` for the full state machine.
+        self._moved_out: dict[str, Note] = {}
         # Derive the set of known folder paths from the seed structure.
         # Both root-only paths and (root, subfolder) paths are valid destinations.
         self._known_paths: set[tuple[str, ...]] = set()
@@ -140,27 +144,55 @@ class MockNotesRepository:
     # ------------------------------------------------------------------
 
     def move_note(self, note_id: str, folder_path: FolderPath) -> None:
-        """Record a move and remove the note from the in-memory inbox.
+        """Record a move; remove from OR (on a re-move) restore to the inbox.
 
-        Validates the note id and destination path before recording the move.
+        Models a triage move and its undo move-back (UX-02 / B1) as a small
+        state machine keyed on whether *note_id* is currently in the inbox:
+
+        - In the inbox → MOVE-OUT: record the move, remove the note from the
+          inbox, and track it in ``_moved_out``.  (Unchanged behaviour for the
+          existing single-move tests: removal + recorded move.)
+        - Tracked in ``_moved_out`` (already moved out) → MOVE-BACK: record the
+          move, pop the note from ``_moved_out``, and RE-ADD it to the inbox so
+          the undo move-back restores inbox membership.
+        - Otherwise (truly unknown id) → ``raise NotesMoveError`` (unchanged).
+
+        Limitation: a re-move always restores the note to the inbox view
+        regardless of *folder_path* — sufficient for undo's move-back semantics
+        (the destination is the captured source/inbox path) and the existing
+        tests, which only ever move a note out once before moving it back.
 
         Args:
             note_id: The opaque note identifier to move.
             folder_path: Ordered tuple of folder names describing the destination.
 
         Raises:
-            NotesMoveError: If ``note_id`` is not found in the current inbox.
+            NotesMoveError: If ``note_id`` is neither in the inbox nor previously
+                moved out (truly unknown id).
             FolderNotFoundError: If ``folder_path`` is not among the known
                 valid destinations derived from the seed structure (or added
                 via ``ensure_folder``).
         """
-        ids = {note.id for note in self._inbox}
-        if note_id not in ids:
-            raise NotesMoveError(note_id)
         if folder_path not in self._known_paths:
             raise FolderNotFoundError(folder_path)
-        self.moves.append((note_id, folder_path))
-        self._inbox = [note for note in self._inbox if note.id != note_id]
+
+        ids = {note.id for note in self._inbox}
+        if note_id in ids:
+            # Move-OUT: record, remove from inbox, track for a later move-back.
+            moved = next(note for note in self._inbox if note.id == note_id)
+            self.moves.append((note_id, folder_path))
+            self._inbox = [note for note in self._inbox if note.id != note_id]
+            self._moved_out[note_id] = moved
+            return
+
+        if note_id in self._moved_out:
+            # Move-BACK (undo): record, restore inbox membership.
+            restored = self._moved_out.pop(note_id)
+            self.moves.append((note_id, folder_path))
+            self._inbox.append(restored)
+            return
+
+        raise NotesMoveError(note_id)
 
     def ensure_folder(self, folder_path: FolderPath) -> None:
         """Register a folder path as known and record it — idempotently.

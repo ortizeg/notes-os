@@ -20,16 +20,19 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
-if TYPE_CHECKING:
-    from notes_os.sorter.models import FolderPath
+from notes_os.sorter.models import (
+    FolderPath,  # noqa: TC001  # needed at runtime for Pydantic model validation
+)
 
 
 logger = logging.getLogger(__name__)
+
+# Undo-entry kind discriminators (no magic strings — see UX-02).
+_KIND_MOVE: str = "move"
+_KIND_SKIP: str = "skip"
 
 
 class SessionSummary(BaseModel):
@@ -60,6 +63,38 @@ class SessionSummary(BaseModel):
             ``moved + skipped + errors``.
         """
         return self.moved + self.skipped + self.errors
+
+
+class UndoEntry(BaseModel):
+    """Immutable record of one reversible triage action (UX-02).
+
+    Pushed onto :attr:`SortSession._undo_stack` by a successful
+    :meth:`SortSession.record_move` or :meth:`SortSession.record_skip`, and
+    popped LIFO by :meth:`SortSession.pop_undo`.  The session captures the
+    *source* path at move time so the Wave-2 screen can move the note back to
+    where it came from; the session itself performs no I/O with these fields.
+
+    Frozen so an entry handed to the screen cannot be mutated after capture.
+
+    Attributes:
+        note_id: The opaque note identifier this action applied to.
+        kind: The action kind — ``"move"`` (:data:`_KIND_MOVE`) or ``"skip"``
+            (:data:`_KIND_SKIP`).
+        source_path: For a move, the folder the note was moved FROM (captured so
+            the screen can move it back).  ``None`` for skips.
+        dest_path: For a move, the folder the note was moved TO.  ``None`` for
+            skips.
+        index: The inbox position the screen steps back to on undo.  Stored
+            verbatim; the session never interprets it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    note_id: str
+    kind: str
+    source_path: FolderPath | None = None
+    dest_path: FolderPath | None = None
+    index: int
 
 
 # ---------------------------------------------------------------------------
@@ -127,37 +162,74 @@ class SortSession:
         self.skipped: int = 0
         self.errors: int = 0
         self._events: list[_NoteEvent] = []
+        self._undo_stack: list[UndoEntry] = []
 
     # ------------------------------------------------------------------
     # Recording triage events (SESS-01)
     # ------------------------------------------------------------------
 
-    def record_move(self, note_id: str, destination: FolderPath) -> None:
+    def record_move(
+        self,
+        note_id: str,
+        destination: FolderPath,
+        *,
+        source_path: FolderPath | None = None,
+        index: int = 0,
+    ) -> None:
         """Record that a note was successfully moved to *destination*.
 
-        Increments :attr:`moved` by one and stores a per-note event for the
-        audit log.
+        Increments :attr:`moved` by one, stores a per-note event for the audit
+        log, and pushes one reversible :class:`UndoEntry` onto the undo stack
+        (UX-02).  Only a SUCCESSFUL move is undoable — see :meth:`pop_undo` and
+        :meth:`record_move_failure` for the errored-event rule.
 
         Args:
             note_id: The opaque note identifier (e.g. ``"x-coredata://..."``).
             destination: Ordered tuple of folder names describing where the note
                 was moved (e.g. ``("Projects", "Web")``).
+            source_path: Keyword-only.  The folder the note was moved FROM,
+                captured so an undo can move it back.  Defaults to ``None`` so
+                the ~30 existing positional call sites keep compiling.
+            index: Keyword-only.  The inbox position the screen steps back to on
+                undo.  Defaults to ``0`` for backward compatibility.
         """
         self.moved += 1
         dest_str = " > ".join(destination)
         self._events.append(_NoteEvent(note_id, _OUTCOME_MOVE, dest_str))
+        self._undo_stack.append(
+            UndoEntry(
+                note_id=note_id,
+                kind=_KIND_MOVE,
+                source_path=source_path,
+                dest_path=destination,
+                index=index,
+            )
+        )
         logger.debug("Recorded move: %s -> %s", note_id, dest_str)
 
-    def record_skip(self, note_id: str) -> None:
+    def record_skip(self, note_id: str, *, index: int = 0) -> None:
         """Record that a note was deliberately left in the inbox.
 
-        Increments :attr:`skipped` by one.
+        Increments :attr:`skipped` by one and pushes one reversible
+        :class:`UndoEntry` (kind ``skip``, no write paths) onto the undo stack
+        (UX-02).
 
         Args:
             note_id: The opaque note identifier.
+            index: Keyword-only.  The inbox position the screen steps back to on
+                undo.  Defaults to ``0`` for backward compatibility.
         """
         self.skipped += 1
         self._events.append(_NoteEvent(note_id, _OUTCOME_SKIP, "skipped"))
+        self._undo_stack.append(
+            UndoEntry(
+                note_id=note_id,
+                kind=_KIND_SKIP,
+                source_path=None,
+                dest_path=None,
+                index=index,
+            )
+        )
         logger.debug("Recorded skip: %s", note_id)
 
     def record_error(self, note_id: str, message: str) -> None:
@@ -193,10 +265,20 @@ class SortSession:
           ``ERROR`` event is appended and only :attr:`errors` is incremented —
           :attr:`moved` is left untouched so it can never go negative.
 
+        Errored-event rule (UX-02): a failed move is NOT undoable.  This method
+        pushes NO :class:`UndoEntry` and additionally REMOVES the most-recent
+        move ``UndoEntry`` for *note_id* from :attr:`_undo_stack` (matched by
+        ``note_id`` + ``kind == _KIND_MOVE``).  This keeps the undo stack in
+        one-to-one correspondence with reversible state so :meth:`pop_undo` can
+        never try to move back a note that is still sitting in the inbox.  It is
+        a no-op if the entry was already popped.
+
         Args:
             note_id: The opaque note identifier whose optimistic move failed.
             message: Human-readable failure description recorded on the event.
         """
+        self._remove_move_undo_entry(note_id)
+
         for event in reversed(self._events):
             if event.note_id == note_id and event.outcome == _OUTCOME_MOVE:
                 event.outcome = _OUTCOME_ERROR
@@ -211,6 +293,56 @@ class SortSession:
         self._events.append(_NoteEvent(note_id, _OUTCOME_ERROR, message))
         self.errors += 1
         logger.warning("Recorded move failure with no prior move: %s — %s", note_id, message)
+
+    def _remove_move_undo_entry(self, note_id: str) -> None:
+        """Remove the most-recent move ``UndoEntry`` for *note_id*, if any.
+
+        Part of the errored-event rule (UX-02): a reconciled (failed) move must
+        not remain undoable.  Walks the undo stack most-recent-first and removes
+        the first matching ``move`` entry.  No-op when no such entry exists.
+
+        Args:
+            note_id: The opaque note identifier whose move entry is reconciled.
+        """
+        for offset, entry in enumerate(reversed(self._undo_stack)):
+            if entry.note_id == note_id and entry.kind == _KIND_MOVE:
+                del self._undo_stack[len(self._undo_stack) - 1 - offset]
+                return
+
+    def pop_undo(self) -> UndoEntry | None:
+        """Pop and reverse the most-recent reversible action (LIFO; UX-02).
+
+        Pops the top :class:`UndoEntry` off the undo stack and reverses its
+        counter: a ``move`` entry decrements :attr:`moved`, a ``skip`` entry
+        decrements :attr:`skipped`.  Each decrement is guarded with ``> 0`` so a
+        stray or duplicate call can never drive a counter negative (mirrors the
+        :meth:`record_move_failure` guard).
+
+        Repeatable and unbounded within the session: successive calls walk the
+        stack LIFO until it is empty, at which point ``None`` is returned with no
+        counter change.
+
+        This method performs NO I/O — the Wave-2 screen consumes the returned
+        entry to perform the actual move-back write and inbox-index step.  The
+        :attr:`errors` counter is intentionally never reversed here: errored and
+        failed moves are not undoable (errored-event rule).  The original
+        MOVE/SKIP audit line is kept append-only; an undo is itself a session
+        event the log legitimately records.
+
+        Returns:
+            The reversed :class:`UndoEntry`, or ``None`` when the undo stack is
+            empty.
+        """
+        if not self._undo_stack:
+            return None
+
+        entry = self._undo_stack.pop()
+        if entry.kind == _KIND_MOVE and self.moved > 0:
+            self.moved -= 1
+        elif entry.kind == _KIND_SKIP and self.skipped > 0:
+            self.skipped -= 1
+        logger.debug("Undo: reversed %s for %s", entry.kind, entry.note_id)
+        return entry
 
     # ------------------------------------------------------------------
     # Summary + log (SESS-02 / SESS-03)

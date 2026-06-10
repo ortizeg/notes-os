@@ -103,7 +103,7 @@ from notes_os.backup import BackupResettable
 from notes_os.exceptions import NotesOSError
 from notes_os.sorter.extractor import extract_tasks
 from notes_os.sorter.router import RouteAction, Router, RouteResult, RouterState
-from notes_os.sorter.session import SortSession
+from notes_os.sorter.session import _KIND_MOVE, _KIND_SKIP, SortSession
 
 
 if TYPE_CHECKING:
@@ -129,12 +129,18 @@ Key legend - Sort Screen
   ↑↓/j/k   Move highlight in folder/subfolder list
   1-9      Jump-highlight to numbered folder (then Enter to select)
   Enter    Select highlighted folder/subfolder
+  U        Undo last action
   Esc / B  Back one level (or return to Home)
   Q        Quit NotesOS
   ?        Show this help
 """
 
 _CATEGORY_PROMPT = "[P]rojects  [A]reas  [R]esources  [X] archive  [S]kip  Esc/B back  ? help"
+
+# Brief hint shown via ``notify`` when ``U`` is pressed but the undo stack is
+# empty (nothing left to reverse).  Named constant per CLAUDE.md no-magic-strings;
+# the tests import it to assert the no-op hint was surfaced (UX-02).
+_NOTHING_TO_UNDO: str = "Nothing to undo."
 
 # Inbox sizes at or below this many notes load all bodies in ONE silent bulk call
 # (no streaming indicator); larger inboxes page their bodies in.  Locked default
@@ -194,6 +200,7 @@ class SortScreen(Screen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "back", "Back", show=True),
         Binding("b", "back", "Back", show=False),
+        Binding("u", "undo", "Undo", show=True),
     ]
 
     def __init__(
@@ -680,7 +687,10 @@ class SortScreen(Screen[None]):
             return
 
         if result.action == RouteAction.SKIP:
-            self._session.record_skip(note.id)
+            # Capture the undo index BEFORE _advance steps _index forward (UX-02):
+            # an undo of this skip steps the pointer back to exactly this note.
+            undo_index = self._index
+            self._session.record_skip(note.id, index=undo_index)
             logger.debug("Note %r skipped", note.id)
             # Signal to the app that a session is in progress (T-06-11 mitigation)
             self.app.sort_in_progress = True  # type: ignore[attr-defined]
@@ -818,6 +828,95 @@ class SortScreen(Screen[None]):
         """Show the sort-screen PARA key legend as a temporary notification."""
         self._show_help()
 
+    # ------------------------------------------------------------------
+    # Undo (UX-02)
+    # ------------------------------------------------------------------
+
+    def _inbox_folder_path(self) -> FolderPath:
+        """Return the inbox folder path — the captured move-back origin (UX-02).
+
+        The source ``FolderPath`` a moved note came from (M1: the configured
+        inbox folder).  Captured onto the :class:`~notes_os.sorter.session.UndoEntry`
+        at move time so an undo move-back targets the TRUE origin rather than a
+        recomputed/guessed path; a future phase capturing a subfolder source would
+        carry a different path on the entry without changing the move-back code.
+
+        Returns:
+            A single-element :class:`~notes_os.sorter.models.FolderPath` naming the
+            configured inbox folder (``("Notes",)`` by default).
+        """
+        app: NotesOSApp = self.app  # type: ignore[assignment]
+        return (app.app_config.bridge.inbox_folder,)
+
+    def action_undo(self) -> None:
+        """Handle ``U``/``u``: undo the most-recent reversible action (UX-02).
+
+        Driven ONLY by the footer ``Binding`` (there is NO ``on_key`` branch for
+        ``u``/``U`` — that would double-fire), mirroring the ``escape``/``b`` →
+        :meth:`action_back` precedent.  Because Textual ``action_*`` methods fire
+        regardless of router state, this guards before dispatching: it is a no-op
+        while ``_loading`` (inbox refs not yet fetched), while ``_inbox_empty``
+        (empty inbox AND the post-:meth:`_complete_finish` summary state, which
+        sets ``_inbox_empty = True``), and at any router state other than
+        ``AWAIT_CATEGORY`` (mid folder/subfolder navigation — ``U`` is not an undo
+        there).  Only when every guard passes does it delegate to
+        :meth:`_handle_undo`.
+        """
+        if self._loading or self._inbox_empty:
+            return
+        if self._router_state is not RouterState.AWAIT_CATEGORY:
+            return
+        self._handle_undo()
+
+    def _handle_undo(self) -> None:
+        """Pop and apply the most-recent reversible action on screen (UX-02).
+
+        Pops :meth:`~notes_os.sorter.session.SortSession.pop_undo` (which already
+        reversed the counter LIFO with ``> 0`` guards).  When the stack is empty
+        the pop returns ``None`` — surface the :data:`_NOTHING_TO_UNDO` hint and
+        return with zero index/counter change (the no-op + hint).
+
+        Otherwise branch on the entry kind:
+
+        - SKIP: step ``_index`` back to the entry's index, reset router state to
+          ``AWAIT_CATEGORY``, clear ``_prev``/``_current_note``, and re-render.  NO
+          write — the skipped note was never removed from ``_refs``, so stepping
+          back re-shows it.
+        - MOVE: enqueue a move-back of the note to the captured source folder
+          through the EXISTING Phase-13 serialized write queue
+          (:meth:`_enqueue_write` → ``ensure_folder``-before-``move_note`` on the
+          single backup-latch-safe drainer), then step ``_index`` back and
+          re-render.  A move-back that fails off-thread flows through the existing
+          :meth:`_on_write_failed` path (no bespoke handling) so counts stay
+          non-negative and the TUI never crashes (T-14-05).
+        """
+        entry = self._session.pop_undo()
+        if entry is None:
+            self.notify(_NOTHING_TO_UNDO)
+            return
+
+        if entry.kind == _KIND_MOVE:
+            # Move-back to the captured source (defensively fall back to the
+            # configured inbox if the entry carried no source path).
+            dest = entry.source_path if entry.source_path is not None else self._inbox_folder_path()
+            display = " > ".join(dest)
+            # Reuse the Phase-13 serialized off-thread drainer — never a
+            # synchronous on-event-loop write (backup-latch + FIFO safe).
+            self._enqueue_write(entry.note_id, dest, display)
+            self.notify("undid move ✓")
+        elif entry.kind != _KIND_SKIP:
+            # Unknown kind — leave state untouched (defensive; should not occur).
+            logger.warning("SortScreen: unknown undo kind %r — ignoring", entry.kind)
+            return
+
+        # Step the pointer back to the undone note and re-render at AWAIT_CATEGORY
+        # (shared by both move-undo and skip-undo).
+        self._index = entry.index
+        self._router_state = RouterState.AWAIT_CATEGORY
+        self._prev = None
+        self._current_note = None
+        self._render_current_note()
+
     def _show_help(self) -> None:
         """Display the help overlay as a Textual notification."""
         self.notify(_HELP_TEXT, title="Sort Help", timeout=8.0)
@@ -863,10 +962,17 @@ class SortScreen(Screen[None]):
         note_id = note.id
         folder_path = result.folder_path
         display = result.display_path or ""
+        # Capture the undo source + index BEFORE _advance changes _index (UX-02):
+        # an undo move-back targets the captured SOURCE folder (the inbox) and
+        # steps the pointer back to exactly this note's position.
+        undo_index = self._index
+        source = self._inbox_folder_path()
 
         extraction_deferred = False
         try:
-            self._session.record_move(note_id, folder_path)  # optimistic count
+            self._session.record_move(
+                note_id, folder_path, source_path=source, index=undo_index
+            )  # optimistic count
             logger.debug("Note %r optimistically moved to %s", note_id, display)
             # Signal to the app that a session is in progress (T-06-11 mitigation).
             self.app.sort_in_progress = True  # type: ignore[attr-defined]
