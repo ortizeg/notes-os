@@ -744,6 +744,77 @@ async def test_digit_alone_does_not_move(tui_config: SorterConfig) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 12: per-session backup cadence in the TUI (BKUP-07)
+# ---------------------------------------------------------------------------
+
+
+async def test_tui_one_backup_per_visit_and_rearm(tui_config: SorterConfig) -> None:
+    """One SortScreen visit with N moves fires ONE backup; a new visit re-arms it.
+
+    The archive path performs two write ops per move (ensure_folder + move_note),
+    so two archived notes are FOUR write ops across the visit — yet the per-
+    session latch means exactly ONE ``BackupManager.create()`` call for the whole
+    visit (BKUP-07).  ``_apply_inbox_refs`` re-arms the latch on each fresh visit
+    (the app-scoped repo is reused), so a SECOND visit's first move produces a
+    SECOND backup.
+
+    This proves the TUI re-arm seam end-to-end; the unit-level
+    ``test_begin_session_rearms_backup`` covers the latch contract in isolation.
+
+    Args:
+        tui_config: SorterConfig fixture with all I/O paths under tmp_path.
+    """
+    notes = [
+        _make_archive_note("visit1-a"),
+        _make_archive_note("visit1-b"),
+        _make_archive_note("visit2-a"),  # left for the second visit
+    ]
+    app, mock_inner, spy = _make_app_with_spy(tui_config, notes)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # ---- Visit 1: archive two notes in a single session ----
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("x")  # archive note 1 (ensure_folder + move_note)
+        await pilot.pause()
+        await pilot.press("x")  # archive note 2 (ensure_folder + move_note)
+        await pilot.pause()
+
+        assert len(mock_inner.moves) == 2, f"two notes should move, got {mock_inner.moves!r}"
+        assert spy.create.call_count == 1, (
+            f"ONE backup for the whole visit (per-session latch), got {spy.create.call_count}"
+        )
+
+        # Return to Home, then start a fresh visit on the SAME app/repo.
+        app.pop_screen()
+        await pilot.pause()
+
+        # ---- Visit 2: a new session must re-arm the latch ----
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # The re-arm happens in _apply_inbox_refs; the latch only fires create()
+        # on the visit's FIRST write — archive the remaining note to trigger it.
+        await pilot.press("x")
+        await pilot.pause()
+
+        assert len(mock_inner.moves) == 3, (
+            f"third note should move on visit 2, got {mock_inner.moves!r}"
+        )
+        assert spy.create.call_count == 2, (
+            f"a fresh SortScreen visit must re-arm the latch and back up again, "
+            f"got {spy.create.call_count}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # PERF-01/02/03: background bulk paged preview load (Plan 10-02)
 # ---------------------------------------------------------------------------
 

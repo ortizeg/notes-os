@@ -8,11 +8,14 @@ optional: Apple Notes does NOT create them on a quiescent (idle) database, so
 their absence is normal and must NOT fail the backup.
 
 ``BackingUpNotesRepository`` is a decorator that wraps any
-``NotesRepositoryProtocol`` implementation.  It fires a backup BEFORE every
-write operation (``move_note``, ``ensure_folder``) and propagates ``BackupError``
-without delegating to the inner repository — proving BKUP-06 (a failed backup
-aborts the pending write) with a simple mock.  Read operations pass straight
-through to the inner repository with no backup overhead.
+``NotesRepositoryProtocol`` implementation.  It captures a restore point before
+the FIRST write of each triage session (``move_note``, ``ensure_folder``) and
+propagates ``BackupError`` without delegating to the inner repository — proving
+BKUP-06 (a failed first-write backup aborts the pending write) with a simple
+mock.  A per-session latch (``_session_backed_up``) means the 2nd..Nth write of
+the same session skip the backup; :meth:`BackingUpNotesRepository.begin_session`
+re-arms the latch at the start of each new session (T-04-09 / T-06-04).  Read
+operations pass straight through to the inner repository with no backup overhead.
 
 Design note — staging-then-rename:
     ``BackupManager.create()`` copies files into a ``<dest>._staging`` sibling
@@ -48,7 +51,7 @@ import logging
 import os
 import shutil
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from notes_os.backup_models import Backup, BackupConfig
 from notes_os.exceptions import BackupError
@@ -467,22 +470,51 @@ class BackupManager:
 # ---------------------------------------------------------------------------
 
 
+@runtime_checkable
+class BackupResettable(Protocol):
+    """Session-reset seam for the backup decorator.
+
+    A narrow structural Protocol exposing a single method,
+    :meth:`begin_session`, that re-arms the once-per-session backup latch on a
+    backup-wrapping repository.  This is deliberately NOT part of
+    :class:`~notes_os.sorter.notes.NotesRepositoryProtocol` — re-arming the
+    latch is a concern of the backup decorator alone, not of every repository.
+
+    Session-start call sites (CLI ``SortController.run``, TUI
+    ``SortScreen._apply_inbox_refs``) narrow the injected ``repo`` to this
+    Protocol via ``isinstance`` so a plain ``MockNotesRepository`` (which lacks
+    ``begin_session`` and also lacks the real backup decorator, so there is
+    nothing to re-arm) is safely skipped — mypy-strict clean, no ``hasattr``.
+    """
+
+    def begin_session(self) -> None:
+        """Re-arm the once-per-session backup latch for a new triage session."""
+        ...
+
+
 class BackingUpNotesRepository:
-    """Decorator that fires a backup before every write to Apple Notes.
+    """Decorator that captures one restore point per triage session.
 
     Implements :class:`~notes_os.sorter.notes.NotesRepositoryProtocol` by
     wrapping an inner ``NotesRepositoryProtocol`` implementation with a
-    ``BackupManager``.  On every write (``move_note``, ``ensure_folder``) it
-    calls :meth:`BackupManager.create` first and propagates any
+    ``BackupManager``.  Before the FIRST write of each session (``move_note`` or
+    ``ensure_folder``) it calls :meth:`BackupManager.create` and propagates any
     :class:`~notes_os.exceptions.BackupError` WITHOUT delegating to the inner
-    repository — so a failed backup ABORTS the write (BKUP-06, proven by SC5).
-    Read operations (``get_inbox_notes``, ``get_para_structure``) pass straight
-    through with no backup overhead.
+    repository — so a failed FIRST-WRITE backup ABORTS that write (BKUP-06): the
+    inner repository is never reached and ``_session_backed_up`` is left ``False``
+    so an immediate retry re-attempts the backup.  Subsequent same-session writes
+    skip the backup entirely (the latch holds).  Read operations
+    (``get_inbox_notes``, ``get_para_structure``) pass straight through with no
+    backup overhead.
+
+    The per-session latch is re-armed by :meth:`begin_session`, which the CLI and
+    TUI call at the start of each triage session.  The repository is structurally
+    an instance of :class:`BackupResettable` so those call sites can narrow to it.
 
     When ``config.auto_backup_on_write`` is ``False``, write operations skip the
-    backup and delegate directly to the inner repository.  This flag exists
-    primarily for testing and explicit opt-out scenarios; leaving it at the
-    default of ``True`` is strongly recommended.
+    backup entirely (the latch is never set) and delegate directly to the inner
+    repository.  This flag exists primarily for testing and explicit opt-out
+    scenarios; leaving it at the default of ``True`` is strongly recommended.
 
     Args:
         inner: The inner ``NotesRepositoryProtocol`` implementation to wrap.
@@ -509,6 +541,51 @@ class BackingUpNotesRepository:
         self._inner = inner
         self._backup_manager = backup_manager
         self._config = config
+        # Once-per-session latch: False means the next write will back up.
+        # Set True only AFTER a successful create(); reset by begin_session().
+        self._session_backed_up: bool = False
+
+    # ------------------------------------------------------------------
+    # Session lifecycle
+    # ------------------------------------------------------------------
+
+    def begin_session(self) -> None:
+        """Re-arm the per-session backup latch for a new triage session.
+
+        Resets ``_session_backed_up`` to ``False`` so the next write
+        (``move_note`` / ``ensure_folder``) captures a fresh restore point.
+        Called at the start of each triage session — one ``SortScreen`` visit
+        (TUI) or one ``SortController.run()`` (CLI).  Idempotent and never
+        raises: it performs only a single boolean assignment.
+
+        Returns:
+            None.
+        """
+        self._session_backed_up = False
+
+    def _maybe_backup_once(self) -> None:
+        """Capture one restore point per session before the first write.
+
+        When ``config.auto_backup_on_write`` is ``True`` AND the session has not
+        yet been backed up, calls :meth:`BackupManager.create`.  A
+        :class:`~notes_os.exceptions.BackupError` from ``create`` PROPAGATES
+        (the caller's write is aborted) and the latch is left ``False`` so a
+        retry re-attempts the backup — preserving BKUP-06 for the session's
+        first write.  The latch is set ``True`` ONLY AFTER a successful
+        ``create``.  When ``auto_backup_on_write`` is ``False`` this is a no-op
+        and the latch is never set.
+
+        Returns:
+            None.
+
+        Raises:
+            BackupError: If the session's first-write backup fails while
+                ``auto_backup_on_write`` is ``True``.
+        """
+        if self._config.auto_backup_on_write and not self._session_backed_up:
+            self._backup_manager.create()  # BackupError propagates — write aborted
+            # Latch only AFTER a successful create so a failed backup retries.
+            self._session_backed_up = True
 
     # ------------------------------------------------------------------
     # Read operations — pass straight through; no backup.
@@ -578,13 +655,16 @@ class BackingUpNotesRepository:
     # ------------------------------------------------------------------
 
     def move_note(self, note_id: str, folder_path: FolderPath) -> None:
-        """Back up the Notes DB then move *note_id* to *folder_path*.
+        """Back up once per session then move *note_id* to *folder_path*.
 
-        When ``config.auto_backup_on_write`` is ``True`` (the default), calls
-        :meth:`BackupManager.create` BEFORE delegating to the inner repository.
-        Any :class:`~notes_os.exceptions.BackupError` raised by the backup is
-        propagated immediately — the inner ``move_note`` is NEVER reached,
-        proving BKUP-06 (backup failure aborts the write).
+        When ``config.auto_backup_on_write`` is ``True`` (the default) and this
+        is the session's FIRST write, calls :meth:`BackupManager.create` BEFORE
+        delegating to the inner repository; 2nd..Nth same-session writes skip
+        the backup (the latch holds).  If this IS the session's first write and
+        the backup fails, the :class:`~notes_os.exceptions.BackupError`
+        propagates immediately — the inner ``move_note`` is NEVER reached and
+        the latch is left unset for retry, proving BKUP-06 (a failed first-write
+        backup aborts the write).
 
         Args:
             note_id: The opaque Apple Notes note identifier.
@@ -592,32 +672,34 @@ class BackingUpNotesRepository:
                 destination.
 
         Raises:
-            BackupError: If the backup fails and ``auto_backup_on_write`` is
-                ``True``.  The inner repository is not called.
+            BackupError: If the session's first-write backup fails and
+                ``auto_backup_on_write`` is ``True``.  The inner repository is
+                not called.
             Any exception raised by the inner ``move_note`` (e.g.
                 :class:`~notes_os.exceptions.NotesMoveError`,
                 :class:`~notes_os.exceptions.FolderNotFoundError`) propagates
-                unchanged when the backup succeeds.
+                unchanged when the backup is skipped or succeeds.
         """
-        if self._config.auto_backup_on_write:
-            self._backup_manager.create()  # BackupError propagates — write aborted
+        self._maybe_backup_once()
         self._inner.move_note(note_id, folder_path)
 
     def ensure_folder(self, folder_path: FolderPath) -> None:
-        """Back up the Notes DB then ensure *folder_path* exists.
+        """Back up once per session then ensure *folder_path* exists.
 
-        Same backup-first semantics as :meth:`move_note`.  When the backup
-        fails, the inner ``ensure_folder`` is NEVER called.
+        Same once-per-session backup semantics as :meth:`move_note`.  When this
+        is the session's first write and the backup fails, the inner
+        ``ensure_folder`` is NEVER called; otherwise the backup is skipped (the
+        latch already holds) and the inner repository is delegated to directly.
 
         Args:
             folder_path: Ordered tuple of folder names to create if absent.
 
         Raises:
-            BackupError: If the backup fails and ``auto_backup_on_write`` is
-                ``True``.  The inner repository is not called.
+            BackupError: If the session's first-write backup fails and
+                ``auto_backup_on_write`` is ``True``.  The inner repository is
+                not called.
             Any exception raised by the inner ``ensure_folder`` propagates
-                unchanged when the backup succeeds.
+                unchanged when the backup is skipped or succeeds.
         """
-        if self._config.auto_backup_on_write:
-            self._backup_manager.create()  # BackupError propagates — write aborted
+        self._maybe_backup_once()
         self._inner.ensure_folder(folder_path)

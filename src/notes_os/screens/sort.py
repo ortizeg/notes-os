@@ -62,7 +62,10 @@ TUI-05 navigation (consistent with HomeScreen):
 
 Threat mitigations:
 - T-06-04 (tamper bypass backup): SortScreen uses ``self.app.repo`` which is
-  the BackingUpNotesRepository from 06-01's DI seam — backup fires before move.
+  the BackingUpNotesRepository from 06-01's DI seam — a restore point is
+  captured before the first write of each session (per-session cadence).
+  ``_apply_inbox_refs`` re-arms the latch via ``begin_session`` once per visit
+  (BKUP-07), since the repo is app-scoped and reused across visits.
 - T-06-05 (one bad note aborts session): every move wrapped in
   ``try/except NotesOSError`` → ``record_error`` + advance (mirrors T-04-10).
 - T-06-06 (invalid keystroke causing bad state): Router returns no-op
@@ -95,6 +98,7 @@ from textual.binding import Binding, BindingType
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+from notes_os.backup import BackupResettable
 from notes_os.exceptions import NotesOSError
 from notes_os.sorter.extractor import extract_tasks
 from notes_os.sorter.router import RouteAction, Router, RouteResult, RouterState
@@ -291,9 +295,21 @@ class SortScreen(Screen[None]):
         body-load worker) or the empty-inbox state, then clears ``_loading``
         to enable ``on_key``.
 
+        Re-arms the per-session backup latch here (BKUP-07): this runs exactly
+        once per SortScreen visit, before any move can occur.  ``app.repo`` is
+        app-scoped (constructed once) and reused across visits, so an explicit
+        per-visit reset is required for each visit to capture its own restore
+        point.  A plain repo without ``begin_session`` (e.g. an injected
+        ``MockNotesRepository``) is safely skipped via the ``BackupResettable``
+        guard.
+
         Args:
             refs: The inbox refs returned by ``get_inbox_note_refs()``.
         """
+        app: NotesOSApp = self.app  # type: ignore[assignment]
+        if isinstance(app.repo, BackupResettable):
+            app.repo.begin_session()
+
         self._refs = refs
         self._index = 0
         self._router_state = RouterState.AWAIT_CATEGORY

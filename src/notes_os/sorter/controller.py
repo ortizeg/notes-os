@@ -13,13 +13,15 @@ with a :class:`~notes_os.sorter.ui.SortUIProtocol` fake and a
 
 ``build_default_controller(config)`` constructs the production wiring:
 :class:`~notes_os.sorter.notes.AppleScriptNotesRepository` wrapped in
-:class:`~notes_os.backup.BackingUpNotesRepository` so that a backup fires before
-every write (SC4 backup-then-move).
+:class:`~notes_os.backup.BackingUpNotesRepository` so that a restore point is
+captured before the first write of each session (per-session backup cadence).
 
 Threat mitigations
 ------------------
-- T-04-09: every write path goes through BackingUpNotesRepository (backup-then-move)
-  — wired in ``build_default_controller``.
+- T-04-09: every write path goes through BackingUpNotesRepository, which captures
+  a restore point before the first write of each session (per-session cadence);
+  ``SortController.run`` re-arms the latch via ``begin_session`` at session start
+  (BKUP-07) — wired in ``build_default_controller``.
 - T-04-10: each note's move is wrapped in ``try/except NotesOSError`` so one failure
   does NOT abort the whole session; the error is recorded and the loop continues.
 """
@@ -29,6 +31,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from notes_os.backup import BackupResettable
 from notes_os.exceptions import NotesOSError
 from notes_os.sorter.router import RouteAction, RouteResult, RouterState
 from notes_os.sorter.session import SortSession
@@ -134,10 +137,20 @@ class SortController:
         failure does NOT abort the session (T-04-10 mitigation).  After the
         loop the session summary is shown and the audit log is written.
 
+        Arms the per-session backup latch at session start (BKUP-07): the
+        backup-decorating repo captures one restore point before this session's
+        first write.  Re-arming here (and on every ``run``) ensures a fresh
+        restore point per session even if the same repo instance is reused.
+
         Returns:
             None.  Side effects: notes moved in Apple Notes (via repo), audit
             log written under ``config.log_dir``.
         """
+        # Arm the once-per-session backup latch (BKUP-07).  A plain repo without
+        # begin_session (and thus without the backup decorator) is safely skipped.
+        if isinstance(self._repo, BackupResettable):
+            self._repo.begin_session()
+
         notes = self._repo.get_inbox_notes()
         self._ui.show_inbox_count(len(notes))
         logger.info("Sort session started — %d notes in inbox", len(notes))
