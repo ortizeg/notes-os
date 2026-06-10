@@ -234,10 +234,46 @@ class Router:
             year_provider if year_provider is not None else lambda: datetime.datetime.now().year
         )
         self._defer_writes: bool = defer_writes
+        # Session-lifetime cache for the PARA folder hierarchy (see
+        # _get_para_structure).  None until the first fetch.
+        self._structure_cache: ParaStructure | None = None
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _get_para_structure(self) -> ParaStructure:
+        """Return the PARA structure, fetching it from the repo at most once.
+
+        ``get_para_structure`` is a single ~2.5 s Apple Event, and the routing
+        handlers (:meth:`handle_category`, :meth:`handle_folder`,
+        :meth:`handle_back`) each call it on every keystroke — so the uncached
+        path froze the UI for multiple seconds on every category/folder
+        selection (a P→folder move paid it twice).  The folder hierarchy is
+        static for the lifetime of a triage session: M1 routes into folders the
+        user picks from the menu and never creates new PARA subfolders through
+        it, so memoising the snapshot for the Router's lifetime removes the
+        freeze while preserving correctness — the menu always offers the folders
+        that existed when the session began.
+
+        Returns:
+            The cached :class:`~notes_os.sorter.models.ParaStructure`, fetching
+            it on first call.
+        """
+        if self._structure_cache is None:
+            self._structure_cache = self._repo.get_para_structure()
+        return self._structure_cache
+
+    def prime_para_structure(self) -> None:
+        """Warm the PARA-structure cache (intended for a background worker).
+
+        Calling this off the event-loop thread shortly after the screen mounts
+        means the ~2.5 s ``get_para_structure`` Apple Event resolves before the
+        user's first keystroke, so even the first category/folder selection is
+        instant.  Safe to call more than once — subsequent calls are no-ops via
+        :meth:`_get_para_structure`'s cache.
+        """
+        self._get_para_structure()
 
     def _subfolders_for_folder(
         self, structure: ParaStructure, root: str, folder: str
@@ -331,7 +367,6 @@ class Router:
         Returns:
             A :class:`RouteResult` describing the outcome of the transition.
         """
-        structure = self._repo.get_para_structure()
         lower_key = key.lower()
 
         # --- Archive auto-year (ROUT-02) ---
@@ -361,7 +396,10 @@ class Router:
 
         root = root_map[lower_key]
 
-        # Compute the folder options for this root (General first per ROUT-05)
+        # Compute the folder options for this root (General first per ROUT-05).
+        # Fetch the structure only now — X/S/?/unrecognised keys returned above
+        # never touch Apple Notes.
+        structure = self._get_para_structure()
         raw_folders = structure.subfolders_for(root)
         folder_options = _sort_general_first(raw_folders)
 
@@ -409,7 +447,7 @@ class Router:
         folder = options[index - 1]
 
         # Check for sub-subfolders
-        structure = self._repo.get_para_structure()
+        structure = self._get_para_structure()
         sub_options = self._subfolders_for_folder(structure, root, folder)
         sub_options = _sort_general_first(sub_options)
 
@@ -485,7 +523,7 @@ class Router:
         if current_state == RouterState.AWAIT_SUBFOLDER:
             # Go back to AWAIT_FOLDER — recompute folder options for the same root
             root = prev.selected_root or ""
-            structure = self._repo.get_para_structure()
+            structure = self._get_para_structure()
             raw_folders = structure.subfolders_for(root)
             folder_options = _sort_general_first(raw_folders)
             return RouteResult(
