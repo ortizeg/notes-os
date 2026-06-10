@@ -729,3 +729,71 @@ class TestDeferWritesSeam:
         router.handle_category("a", _note("id1"))  # Areas leaf -> ("Areas",)
         assert call_order == ["ensure_folder", "move_note"]
         assert repo.moves == [("id1", ("Areas",))]
+
+
+class TestParaStructureCaching:
+    """The PARA structure is fetched at most once per Router (perf: PERF-BULK).
+
+    ``get_para_structure`` is a ~2.5s Apple Event; the routing handlers used to
+    call it on every keystroke, freezing the UI for seconds on each selection.
+    The Router memoises the snapshot for its (session) lifetime.
+    """
+
+    def _structure(self) -> ParaStructure:
+        return ParaStructure(
+            roots=("Projects", "Areas", "Resources", "Archive"),
+            subfolders={
+                "Projects": ("General", "Web"),
+                "Areas": ("Health",),
+                "Resources": (),
+                "Archive": (),
+            },
+        )
+
+    def _router_with_spy(self) -> tuple[Router, list[int]]:
+        """Return a Router whose repo counts get_para_structure calls."""
+        structure = self._structure()
+        repo = MockNotesRepository(notes=[_note("id1")], structure=structure)
+        calls = [0]
+        original = repo.get_para_structure
+
+        def counted() -> ParaStructure:
+            calls[0] += 1
+            return original()
+
+        repo.get_para_structure = counted  # type: ignore[method-assign]
+        router = Router(repo=repo, config=_config(), year_provider=lambda: 2031)
+        return router, calls
+
+    def test_structure_fetched_once_across_a_full_move(self) -> None:
+        """A category→folder move resolves the structure with a single fetch."""
+        router, calls = self._router_with_spy()
+        cat = router.handle_category("p", _note("id1"))  # AWAIT_FOLDER
+        router.handle_folder(2, cat, _note("id1"))  # select "Web" -> move
+        assert calls[0] == 1  # was 2 before memoisation
+
+    def test_structure_fetched_once_across_many_keystrokes(self) -> None:
+        """Repeated category/folder/back selections never re-hit the repo."""
+        router, calls = self._router_with_spy()
+        for _ in range(5):
+            cat = router.handle_category("p", _note("id1"))
+            router.handle_folder(1, cat, _note("id1"))
+        assert calls[0] == 1
+
+    def test_archive_skip_help_never_fetch_structure(self) -> None:
+        """X/S/? return before any structure fetch (no Apple Event on those keys)."""
+        router, calls = self._router_with_spy()
+        router.handle_category("s", _note("id1"))  # skip
+        router.handle_category("?", _note("id1"))  # help
+        assert calls[0] == 0
+        router.handle_category("x", _note("id1"))  # archive -> move, no structure needed
+        assert calls[0] == 0
+
+    def test_prime_para_structure_warms_the_cache(self) -> None:
+        """prime_para_structure does the one fetch up front; later keys are free."""
+        router, calls = self._router_with_spy()
+        router.prime_para_structure()
+        assert calls[0] == 1
+        cat = router.handle_category("p", _note("id1"))
+        router.handle_folder(1, cat, _note("id1"))
+        assert calls[0] == 1  # served entirely from the warmed cache

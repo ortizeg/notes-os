@@ -347,6 +347,27 @@ class SortScreen(Screen[None]):
 
         # Start the background worker; on_key is guarded by _loading=True.
         self._load_inbox_refs()
+        # Warm the PARA-structure cache off-thread so the first category/folder
+        # selection is instant (get_para_structure is a ~2.5s Apple Event the
+        # router would otherwise hit synchronously on the first keystroke).
+        self._warm_para_structure()
+
+    @work(thread=True)
+    def _warm_para_structure(self) -> None:
+        """Prime the router's PARA-structure cache off the event-loop thread.
+
+        Runs concurrently with the refs/body load so the ~2.5s structure Apple
+        Event resolves before the user acts.  Failures are swallowed — the
+        router falls back to a synchronous fetch on first use (the pre-fix
+        behaviour), so a warm-up error only forfeits the latency win.
+        """
+        router = self._router
+        if router is None:
+            return
+        try:
+            router.prime_para_structure()
+        except Exception:
+            logger.warning("SortScreen: failed to warm PARA structure", exc_info=True)
 
     @work(thread=True, exclusive=True)
     def _load_inbox_refs(self) -> None:
