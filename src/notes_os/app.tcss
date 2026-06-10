@@ -59,16 +59,20 @@ Screen {
     width: 100%;
     padding: 1 2;
     color: $accent;
+    /* Bold + a subtle full-width header band so the title reads unmistakably as
+       the title, distinct from the note body in the bordered box below. */
     text-style: bold;
+    background: $boost;
 }
 
 #note-preview {
     width: 80%;
     height: auto;
     max-height: 10;
-    border: solid $panel;
+    border: round $panel;
+    border-title-color: $text-muted;
     padding: 0 1;
-    margin: 0 1;
+    margin: 1 1;
     color: $text;
 }
 
