@@ -1437,7 +1437,9 @@ class SortScreen(Screen[None]):
                 f"Needs attention (these notes stayed in your inbox):\n{attention_lines}"
             )
         self.query_one("#note-title", Static).update("Sort Session Complete")
-        self.query_one("#note-preview", Static).update(summary_text)
+        preview = self.query_one("#note-preview", Static)
+        preview.border_title = "Summary"
+        preview.update(summary_text)
         self.query_one("#prompt", Static).update("")
         self.query_one("#progress", Static).update(f"Processed {summary.total} note(s).")
         self._inbox_empty = True
@@ -1485,6 +1487,9 @@ class SortScreen(Screen[None]):
             self._current_note = self._get_or_kick_note(ref.id, self._index)
 
         preview = self.query_one("#note-preview", Static)
+        # Label the bordered box so it reads clearly as the note body (vs the
+        # bold title band above it).
+        preview.border_title = "Note text"
         if self._current_note is not None:
             # Body cached — show the real preview and drop the dim skeleton class.
             preview.remove_class(_PREVIEW_SKELETON_CLASS)
@@ -1535,8 +1540,8 @@ class SortScreen(Screen[None]):
     def _render_empty_inbox(self) -> None:
         """Render the empty-inbox state widgets."""
         self.query_one("#note-title", Static).update("Inbox Empty")
-        self.query_one("#note-preview", Static).update(
-            "No notes in the inbox to sort.\n\nPress Esc or B to return home."
-        )
+        preview = self.query_one("#note-preview", Static)
+        preview.border_title = ""
+        preview.update("No notes in the inbox to sort.\n\nPress Esc or B to return home.")
         self.query_one("#prompt", Static).update("")
         self.query_one("#progress", Static).update("0 notes")
