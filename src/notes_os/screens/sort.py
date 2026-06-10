@@ -22,14 +22,26 @@ Lazy-loading architecture (performance fix for large inboxes):
 
     1. ``_load_inbox_refs`` (fast): calls ``get_inbox_note_refs()`` — two
        Apple Events total, returns id+title only.
-    2. ``_load_note_body(ref_id, index)`` (lazy per-note): calls
-       ``get_note(ref_id)`` — one Apple Event per note, fired on demand.
-    3. Prefetch: when a note body is loaded, the NEXT note's body is also
-       prefetched into ``_note_cache`` in the background (cache-warm for
-       instant next-note render).
+    2. ``_load_body_page(offset, count)`` (background bulk load): after refs
+       land, bodies are paged into ``_note_cache`` via
+       ``get_inbox_note_bodies(offset, count)``.  Inboxes at or below
+       ``_BULK_THRESHOLD`` notes load in ONE silent call (no indicator);
+       larger inboxes stream in pages of ``_BULK_PAGE_SIZE`` (first page
+       first) with a non-blocking ``Loading previews… N/M`` indicator that
+       counts notes loaded and clears on completion.  Pages merge into
+       ``_note_cache`` keyed by ``note.id``; an out-of-order page self-
+       corrects because the current-note re-render resolves the body by
+       ``_note_cache[self._refs[self._index].id]`` (id-keyed, not positional).
+    3. ``_load_note_body(ref_id, index)`` / ``_get_or_kick_note`` (by-id
+       fallback): the single-note ``get_note(ref_id)`` path survives ONLY as
+       the cache-miss fallback for a note reached before its bulk page lands
+       (skip-faster-than-load — PERF-03).  There is no prefetch chain.
 
-    The Router and move operations only need ``note.id`` — moves are never
-    blocked on body load.  Body load is cosmetic (preview display only).
+    The bulk body load runs on a ``@work(thread=True)`` worker and never sets
+    ``_loading``; keystrokes stay live while bodies stream (T-06-07 preserved —
+    the event loop is never blocked).  The Router and move operations only need
+    ``note.id`` — moves are never blocked on body load.  Body load is cosmetic
+    (preview display only).
 
 State the screen holds (mirrors SortController call-stack context):
 - ``_router`` — the stateless PARA state machine; stateless between calls.
@@ -119,6 +131,15 @@ Key legend - Sort Screen
 
 _CATEGORY_PROMPT = "[P]rojects  [A]reas  [R]esources  [X] archive  [S]kip  Esc/B back  ? help"
 
+# Inbox sizes at or below this many notes load all bodies in ONE silent bulk call
+# (no streaming indicator); larger inboxes page their bodies in.  Locked default
+# from SPEC §6 (CLAUDE.md no-magic-numbers).
+_BULK_THRESHOLD: int = 250
+# Page size (in notes) used to stream bodies for an inbox larger than
+# ``_BULK_THRESHOLD``.  First page first so the note in view lands soonest.
+# Locked default from SPEC §6.
+_BULK_PAGE_SIZE: int = 200
+
 
 class SortScreen(Screen[None]):
     """Inbox triage screen that drives the Router via Textual key events.
@@ -135,11 +156,11 @@ class SortScreen(Screen[None]):
     thread.  ``on_key`` is guarded by ``_loading`` and is a safe no-op
     while the worker is running.
 
-    Per-note body loading is lazy: when the screen renders a note, if the
-    full body is not yet in ``_note_cache`` it shows "Loading preview…" and
-    starts a background worker to fetch just that note's body.  A prefetch
-    worker also fetches the NEXT note's body in the background so the user
-    typically sees an instant render when they advance.
+    Body loading is a background paged bulk load (see the module docstring):
+    after refs land, ``_load_body_page`` streams bodies into ``_note_cache``.
+    When the screen renders a note whose body is not yet cached it shows
+    "Loading preview…" and falls back to a single-note ``get_note`` fetch via
+    :meth:`_get_or_kick_note`, updating the preview when that fetch completes.
 
     All live data comes from ``self.app.repo`` (the backup-wrapped repository
     from the NotesOSApp DI seam) and ``self.app.app_config``.
@@ -192,6 +213,12 @@ class SortScreen(Screen[None]):
         self._inbox_empty: bool = False
         self._loading: bool = True  # True until _load_inbox_refs worker completes
         self._highlight: int = 0  # 0-based highlight index for AWAIT_FOLDER/SUBFOLDER
+        # Background bulk-body-load streaming state (notes fraction for the
+        # "Loading previews… N/M" indicator).  Distinct from ``_loading``,
+        # which gates ``on_key`` on refs only — body streaming never blocks keys.
+        self._previews_total: int = 0  # M — total notes (== len(self._refs))
+        self._previews_loaded: int = 0  # N — notes whose bodies have landed
+        self._previews_streaming: bool = False  # True only while paged load runs
 
     def compose(self) -> ComposeResult:
         """Lay out the sort-screen widgets.
@@ -280,9 +307,103 @@ class SortScreen(Screen[None]):
             return
 
         self._render_current_note()
+        self._start_bulk_body_load()
 
     # ------------------------------------------------------------------
-    # Lazy body loading
+    # Background bulk body load (paged)
+    # ------------------------------------------------------------------
+
+    def _start_bulk_body_load(self) -> None:
+        """Kick off the background bulk body load after refs are applied.
+
+        Inboxes at or below :data:`_BULK_THRESHOLD` notes load all bodies in
+        ONE silent background page (``_previews_streaming`` stays ``False`` so
+        no indicator is shown).  Larger inboxes start streaming the FIRST page
+        of :data:`_BULK_PAGE_SIZE` notes; subsequent pages are chained from
+        :meth:`_apply_body_page` (first page first) and a non-blocking
+        ``Loading previews… N/M`` indicator counts notes up.
+
+        The body load never sets ``_loading`` — keystrokes stay live while
+        bodies stream (T-06-07: the event loop is never blocked).
+        """
+        total = len(self._refs)
+        self._previews_total = total
+        self._previews_loaded = 0
+        if total <= _BULK_THRESHOLD:
+            self._previews_streaming = False
+            self._load_body_page(0, total)
+        else:
+            self._previews_streaming = True
+            self._load_body_page(0, _BULK_PAGE_SIZE)
+
+    @work(thread=True)
+    def _load_body_page(self, offset: int, count: int) -> None:
+        """Fetch one page of note bodies off the event-loop thread.
+
+        Calls ``app.repo.get_inbox_note_bodies(offset, count)`` and marshals
+        the resulting page back to the main thread via ``call_from_thread``.
+        A failed page is logged and swallowed (it must not crash the session);
+        any note whose page failed is still resolvable via the by-id
+        ``get_note`` cache-miss fallback (PERF-03 / T-10-06).
+
+        Args:
+            offset: 0-based start index of the page within ``_refs``.
+            count: Number of notes to fetch starting at *offset*.
+        """
+        app: NotesOSApp = self.app  # type: ignore[assignment]
+        try:
+            notes = app.repo.get_inbox_note_bodies(offset, count)
+        except Exception:
+            logger.warning(
+                "SortScreen: failed to bulk-load body page offset=%d count=%d",
+                offset,
+                count,
+                exc_info=True,
+            )
+            return
+        self.app.call_from_thread(self._apply_body_page, notes, offset)
+
+    def _apply_body_page(self, notes: list[Note], offset: int) -> None:
+        """Merge a landed body page into the cache and continue streaming.
+
+        Called on the main thread via ``call_from_thread``.  Merges each note
+        into ``_note_cache`` keyed by ``note.id``; updates the streaming
+        indicator (a notes fraction — N increments by ``len(notes)``); re-
+        renders the current note ONLY when its body just arrived (its index
+        falls inside this page) using an id-keyed lookup so an out-of-order
+        page self-corrects (T-10-07); then chains the next page or, when no
+        pages remain, clears the streaming indicator.
+
+        Args:
+            notes: The page of fully-loaded notes returned by the worker.
+            offset: The 0-based start index of *notes* within ``_refs``.
+        """
+        for note in notes:
+            self._note_cache[note.id] = note
+
+        if self._previews_streaming:
+            self._previews_loaded += len(notes)
+
+        # Re-render the current note ONLY if its body just arrived in this page.
+        # Resolve id-keyed (not positional) so a page returned out of order
+        # still renders the RIGHT note — the phase's #1 named risk.
+        if offset <= self._index < offset + len(notes):
+            current_ref = self._refs[self._index]
+            cached = self._note_cache.get(current_ref.id)
+            if cached is not None:
+                self._current_note = cached
+        self._render_current_note()
+
+        if self._previews_streaming:
+            next_offset = offset + _BULK_PAGE_SIZE
+            if next_offset < len(self._refs):
+                self._load_body_page(next_offset, _BULK_PAGE_SIZE)
+            else:
+                self._previews_streaming = False
+                self._render_progress()
+
+    # ------------------------------------------------------------------
+    # Lazy body loading (by-id cache-miss fallback)
     # ------------------------------------------------------------------
 
     @work(thread=True)
@@ -310,9 +431,9 @@ class SortScreen(Screen[None]):
         """Cache the fetched note body and refresh the preview if still current.
 
         Called on the main thread via ``call_from_thread`` from
-        :meth:`_load_note_body`.  Caches the note unconditionally (for
-        prefetch use), then re-renders the preview only when the user is
-        still viewing the same note position.
+        :meth:`_load_note_body` (the cache-miss fallback).  Caches the note
+        unconditionally, then re-renders the preview only when the user is
+        still viewing the same note position (stale-index guard).
 
         Args:
             note: The fully-loaded note (id, title, body, preview).
@@ -323,25 +444,6 @@ class SortScreen(Screen[None]):
             self._current_note = note
             # Re-render to show the now-loaded preview
             self._render_current_note()
-            # Prefetch the next note while the user reads this one
-            self._prefetch_next(index)
-
-    def _prefetch_next(self, current_index: int) -> None:
-        """Start a background body-fetch for the note at ``current_index + 1``.
-
-        Called after a note's body loads (so the NEXT note is warm in the
-        cache when the user advances).  No-ops when already cached or at
-        the end of the inbox.
-
-        Args:
-            current_index: The currently-displayed note's inbox position.
-        """
-        next_index = current_index + 1
-        if next_index >= len(self._refs):
-            return
-        next_ref = self._refs[next_index]
-        if next_ref.id not in self._note_cache:
-            self._load_note_body(next_ref.id, next_index)
 
     def _get_or_kick_note(self, ref_id: str, index: int) -> Note | None:
         """Return the cached Note for *ref_id*, or start a background load.
@@ -826,6 +928,25 @@ class SortScreen(Screen[None]):
         self.query_one("#progress", Static).update(f"Processed {summary.total} note(s).")
         self._inbox_empty = True
 
+    def _render_progress(self) -> None:
+        """Compose and write the ``#progress`` panel text.
+
+        Always shows the per-note line ``Note {pos} of {total}``.  While the
+        background bulk body load is streaming (``_previews_streaming``), a
+        second line ``Loading previews… {N}/{M}`` is appended, where N is the
+        notes-loaded count and M is the total note count (a notes fraction,
+        never a pages/notes mix).  The previews line disappears on completion.
+
+        Composing both lines here means neither the per-note render nor the
+        page-merge clobbers the other while pages are still loading.
+        """
+        total = len(self._refs)
+        pos = self._index + 1
+        text = f"Note {pos} of {total}"
+        if self._previews_streaming:
+            text = f"{text}\nLoading previews… {self._previews_loaded}/{self._previews_total}"
+        self.query_one("#progress", Static).update(text)
+
     def _render_current_note(self) -> None:
         """Update the four Static widgets to reflect the current note and state.
 
@@ -838,9 +959,7 @@ class SortScreen(Screen[None]):
         if ref is None:
             return
 
-        total = len(self._refs)
-        pos = self._index + 1
-        self.query_one("#progress", Static).update(f"Note {pos} of {total}")
+        self._render_progress()
         self.query_one("#note-title", Static).update(ref.title)
 
         # Try to get the full body from cache (or kick off a load)

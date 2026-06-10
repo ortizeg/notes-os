@@ -549,6 +549,22 @@ class BackingUpNotesRepository:
         """
         return self._inner.get_note(note_id)
 
+    def get_inbox_note_bodies(self, offset: int, count: int) -> list[Note]:
+        """Return a page of inbox note bodies from the inner repository with no backup.
+
+        This is a pure read operation — it NEVER triggers a backup, mirroring
+        the other read pass-throughs in this section.
+
+        Args:
+            offset: 0-based start index into the inbox notes in folder order.
+            count: Number of notes to fetch starting at *offset*.
+
+        Returns:
+            The result of the inner repository's
+            ``get_inbox_note_bodies(offset, count)``.
+        """
+        return self._inner.get_inbox_note_bodies(offset, count)
+
     def count_inbox_notes(self) -> int:
         """Return inbox note count from the inner repository with no backup.
 
