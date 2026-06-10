@@ -86,3 +86,66 @@ def test_main_handles_missing_package_version(
     monkeypatch.setattr(importlib.metadata, "version", _raise)
     monkeypatch.setattr(NotesOSApp, "run", lambda self: None)
     assert main() is None
+
+
+def test_main_exits_cleanly_on_config_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main() exits 1 (no traceback) when load_config raises ConfigError.
+
+    A malformed ``config.toml`` must surface as a friendly message and a
+    non-zero exit, never an uncaught :class:`~notes_os.config.ConfigError`
+    propagating out of ``NotesOSApp.__init__``.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+    """
+    import pytest as _pytest
+
+    from notes_os import config as config_mod
+
+    def _raise_config_error(_path: object = None) -> object:
+        raise config_mod.ConfigError("Malformed TOML in config file …")
+
+    monkeypatch.setattr(config_mod, "load_config", _raise_config_error)
+    # If the error path were not taken, run() would be reached — guard against it.
+    monkeypatch.setattr(NotesOSApp, "run", lambda self: None)
+
+    with _pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code == 1
+
+
+def test_main_exits_cleanly_on_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main() exits 1 (no traceback) when load_config raises ValidationError.
+
+    Well-formed TOML whose values fail schema validation raises
+    :class:`pydantic.ValidationError`; ``main()`` must treat it the same as a
+    ``ConfigError`` — friendly message, exit code 1.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+    """
+    import pytest as _pytest
+    from pydantic import BaseModel, ValidationError
+
+    from notes_os import config as config_mod
+
+    class _Tiny(BaseModel):
+        x: int
+
+    def _raise_validation_error(_path: object = None) -> object:
+        try:
+            _Tiny.model_validate({"x": "not-an-int"})
+        except ValidationError as exc:
+            raise exc
+        raise AssertionError("expected ValidationError")  # pragma: no cover
+
+    monkeypatch.setattr(config_mod, "load_config", _raise_validation_error)
+    monkeypatch.setattr(NotesOSApp, "run", lambda self: None)
+
+    with _pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code == 1
