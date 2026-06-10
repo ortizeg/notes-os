@@ -594,24 +594,31 @@ end tell"""
         # literals; only the inbox name is a dynamic string needing escaping.
         start_idx = offset + 1  # AppleScript is 1-based
         end_idx = offset + count  # inclusive end before clamping
+        # Bulk list reads, NOT a per-note indexed loop.  Each `<prop> of notes a
+        # thru b of inbox` is ONE Apple Event returning the whole property list;
+        # the repeat loop then indexes into in-process AppleScript lists.  The
+        # previous `id/name/body of item i of (notes of inbox)` form re-resolved
+        # the Notes specifier on every access (3 Apple Events x N notes), which
+        # measured ~60 s for 110 notes on a real library — past the osascript
+        # timeout, so the whole page failed.  The bulk form is ~30x faster and
+        # mirrors the proven idiom in `get_inbox_note_refs`.  A range whose start
+        # is past the clamped end yields no notes, so guard it in AppleScript.
         script = f"""\
 tell application "Notes"
     set fs to (ASCII character 31)
     set rs to (ASCII character 30)
     set inbox to folder "{inbox}"
-    set noteList to notes of inbox
     set lastIdx to {end_idx}
-    if lastIdx > (count of noteList) then set lastIdx to (count of noteList)
+    set noteCount to (count of notes of inbox)
+    if lastIdx > noteCount then set lastIdx to noteCount
+    if {start_idx} > lastIdx then return ""
+    set theIDs to id of notes {start_idx} thru lastIdx of inbox
+    set theNames to name of notes {start_idx} thru lastIdx of inbox
+    set theBodies to body of notes {start_idx} thru lastIdx of inbox
     set output to ""
-    repeat with i from {start_idx} to lastIdx
-        set noteID to id of item i of noteList
-        set noteTitle to name of item i of noteList
-        set noteBody to body of item i of noteList
-        if output is "" then
-            set output to noteID & fs & noteTitle & fs & noteBody
-        else
-            set output to output & rs & noteID & fs & noteTitle & fs & noteBody
-        end if
+    repeat with i from 1 to (count of theIDs)
+        if output is not "" then set output to output & rs
+        set output to output & (item i of theIDs) & fs & (item i of theNames) & fs & (item i of theBodies)
     end repeat
     return output
 end tell"""
