@@ -42,7 +42,7 @@ from textual.widgets import Static
 from notes_os.app import NotesOSApp
 from notes_os.backup import BackingUpNotesRepository, BackupManager
 from notes_os.backup_models import Backup
-from notes_os.exceptions import BackupError
+from notes_os.exceptions import BackupError, NotesMoveError
 from notes_os.screens.sort import _BULK_PAGE_SIZE, _BULK_THRESHOLD, SortScreen
 from notes_os.sorter.models import Note, ParaStructure
 from notes_os.sorter.router import RouterState
@@ -50,6 +50,7 @@ from notes_os.sorter.router import RouterState
 
 if TYPE_CHECKING:
     from notes_os.config import SorterConfig
+    from notes_os.sorter.models import FolderPath
     from tests.sorter.conftest import MockNotesRepository
 
 
@@ -343,11 +344,13 @@ async def test_archive_move_backup_failure_does_not_crash(
 ) -> None:
     """Regression: a backup failure on the [X] archive path must not crash the TUI.
 
-    The archive move happens INSIDE router.handle_category → ensure_folder →
-    backup.create(). When the backup raises (e.g. Full Disk Access not granted →
-    PermissionError → BackupError), the screen must record the error and keep the
-    (un-moved) note in view at AWAIT_CATEGORY — never propagate and crash the app
-    (BRDG-06 resilience + BKUP-06 abort-on-failed-backup).
+    Updated for Phase 13-02's off-thread write: the move is now deferred
+    (``defer_writes=True``) and runs on the serialized drainer.  When the backup
+    raises (e.g. Full Disk Access not granted → PermissionError → BackupError) the
+    worker's write fails, so the screen surfaces it via ``_on_write_failed``:
+    the optimistic move is reconciled to an error (``record_move_failure``),
+    tracked in ``_failed_moves``, and the note stays in the inbox — the app never
+    crashes (BRDG-06 resilience + BKUP-06 + PERF-05).
 
     Args:
         tui_config: SorterConfig fixture.
@@ -366,7 +369,9 @@ async def test_archive_move_backup_failure_does_not_crash(
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        await pilot.press("x")  # archive → ensure_folder → backup.create() raises
+        await pilot.press("x")  # archive → deferred → worker write → backup.create() raises
+        await pilot.pause()
+        await app.workers.wait_for_complete()  # drain the failing write
         await pilot.pause()
 
         sort_screen: SortScreen = app.screen  # type: ignore[assignment]
@@ -375,9 +380,8 @@ async def test_archive_move_backup_failure_does_not_crash(
         summary = sort_screen._session.summary()
         assert summary.errors == 1, f"expected 1 recorded error, got {summary!r}"
         assert summary.moved == 0
-        assert sort_screen._router_state == RouterState.AWAIT_CATEGORY
-        prompt_text = str(sort_screen.query_one("#prompt", Static).render())
-        assert "Could not move" in prompt_text, prompt_text
+        assert len(sort_screen._failed_moves) == 1, "failed move must be tracked"
+        assert sort_screen._failed_moves[0][0] == "err-1"
 
 
 # ---------------------------------------------------------------------------
@@ -1007,3 +1011,333 @@ async def test_cold_note_resolves_via_get_note_fallback(
         preview_text = str(sort_screen.query_one("#note-preview", Static).render())
         assert "preview 0" in preview_text, preview_text
         assert "Loading preview" not in preview_text, preview_text
+
+
+# ---------------------------------------------------------------------------
+# Phase 13-02: optimistic advance + serialized off-thread write (PERF-04/05)
+# ---------------------------------------------------------------------------
+
+
+async def test_move_advances_optimistically_before_write(
+    tui_config: SorterConfig,
+) -> None:
+    """PERF-04: a move advances synchronously; the write is queued, not inline.
+
+    Push a two-note inbox, press 'x', and pause ONCE (do NOT drain workers).
+    The screen must ALREADY have advanced — ``moved == 1`` and ``_index == 1`` —
+    with the write still pending (queued or a writer in flight), proving the move
+    was dispatched off-thread and never blocked the event loop.  After draining,
+    the inner repo recorded the move and exactly one backup create() fired.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    notes = [_make_archive_note("opt-1"), _make_archive_note("opt-2")]
+    app, mock_inner, spy_manager = _make_app_with_spy(tui_config, notes)
+
+    # Gate the worker write so the "still pending" state is observable
+    # deterministically (the thread worker would otherwise drain during the pause).
+    gate = threading.Event()
+    real_move = mock_inner.move_note
+
+    def gated_move(note_id: str, folder_path: FolderPath) -> None:
+        gate.wait(timeout=5.0)
+        real_move(note_id, folder_path)
+
+    mock_inner.move_note = gated_move  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        await pilot.press("x")
+        await pilot.pause()
+
+        # Advanced optimistically while the gated write is still in flight.
+        assert sort_screen._session.summary().moved == 1
+        assert sort_screen._index == 1, f"expected advance to index 1, got {sort_screen._index}"
+        assert sort_screen._writer_active is True, "move must be in flight off-thread, not inline"
+
+        # Release the gate and drain the write worker — the move and one backup land.
+        gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(mock_inner.moves) == 1, (
+            f"expected the queued move to land, got {mock_inner.moves!r}"
+        )
+        assert mock_inner.moves[0][0] == "opt-1"
+        assert spy_manager.create.call_count == 1
+
+
+async def test_router_runs_in_defer_writes_mode(tui_config: SorterConfig) -> None:
+    """PERF-04: the SortScreen Router is constructed with defer_writes=True.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = _make_archive_note("defer-1")
+    app, _mock_inner, _spy = _make_app_with_spy(tui_config, [note])
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+        assert sort_screen._router is not None
+        assert sort_screen._router._defer_writes is True
+
+
+async def test_rapid_moves_never_freeze(tui_config: SorterConfig) -> None:
+    """PERF-04: a skip issued right after a move is honored — the loop never froze.
+
+    Press 'x' (move note 1) then immediately 's' (skip note 2) with only a
+    ``pilot.pause()`` between (no ``wait_for_complete``).  BOTH must be honored —
+    ``moved == 1``, ``skipped == 1``, ``_index == 2`` — proving the event loop
+    stayed responsive while the move's write was still in flight.  After draining,
+    the one move landed and exactly one backup create() fired.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    notes = [_make_archive_note("rapid-1"), _make_archive_note("rapid-2")]
+    app, mock_inner, spy_manager = _make_app_with_spy(tui_config, notes)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        await pilot.press("x")
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+
+        assert sort_screen._session.summary().moved == 1
+        assert sort_screen._session.summary().skipped == 1
+        assert sort_screen._index == 2, (
+            f"both keystrokes must advance; got index {sort_screen._index}"
+        )
+
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(mock_inner.moves) == 1, f"expected one landed move, got {mock_inner.moves!r}"
+        assert spy_manager.create.call_count == 1
+
+
+async def test_serialized_writes_one_backup_fifo_order(
+    tui_config: SorterConfig,
+) -> None:
+    """Serialized single-writer: two moves keep FIFO order with ONE backup.
+
+    Press 'x', pause, 'x', pause, then drain.  The inner repo's moves preserve
+    enqueue order (note 1 before note 2 — T-13-06) and exactly one backup
+    create() fired for the whole session (the per-session latch was not corrupted
+    by concurrency — T-13-05).
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    notes = [_make_archive_note("fifo-1"), _make_archive_note("fifo-2")]
+    app, mock_inner, spy_manager = _make_app_with_spy(tui_config, notes)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("x")
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert [m[0] for m in mock_inner.moves] == ["fifo-1", "fifo-2"], (
+            f"moves must preserve FIFO order, got {mock_inner.moves!r}"
+        )
+        assert spy_manager.create.call_count == 1, (
+            f"exactly one session backup (single-writer latch safe), got "
+            f"{spy_manager.create.call_count}"
+        )
+
+
+async def test_failed_write_surfaced_recorded_and_note_retained(
+    tui_config: SorterConfig,
+) -> None:
+    """PERF-05: a failed off-thread write is surfaced, recorded, and the note kept.
+
+    Inject a worker ``move_note`` failure for the target note.  The screen
+    advances optimistically (``moved == 1`` immediately).  After draining, the
+    move is reconciled to an error (``moved == 0`` / ``errors == 1`` via
+    ``record_move_failure``), ``_failed_moves`` names the note, the note is
+    RETAINED in the inner inbox (never dropped), and the TUI did not crash.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = _make_archive_note("fail-1")
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, [note])
+
+    # Gate the failing write so the OPTIMISTIC move count is observable before
+    # the worker reconciles it to an error (deterministic; no thread-timing race).
+    gate = threading.Event()
+
+    def gated_failing_move(note_id: str, folder_path: FolderPath) -> None:
+        gate.wait(timeout=5.0)
+        raise NotesMoveError(note_id)
+
+    mock_inner.move_note = gated_failing_move  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        await pilot.press("x")
+        await pilot.pause()
+        # Optimistic count before the gated worker write fails.
+        assert sort_screen._session.summary().moved == 1
+
+        # Release the gate — the worker write raises and reconciles the count.
+        gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Reconciled: move → error.
+        summary = sort_screen._session.summary()
+        assert summary.moved == 0, f"failed move must be reconciled to 0, got {summary.moved}"
+        assert summary.errors == 1, f"expected 1 error after reconcile, got {summary.errors}"
+
+        # Tracked in the needs-attention list, naming the note.
+        assert len(sort_screen._failed_moves) == 1
+        failed_id, _failed_display, _failed_msg = sort_screen._failed_moves[0]
+        assert failed_id == "fail-1"
+
+        # Note RETAINED — move_note raised before removing it from the inbox.
+        inbox_ids = {n.id for n in mock_inner.get_inbox_notes()}
+        assert "fail-1" in inbox_ids, "failed note must stay in the inbox (never dropped)"
+
+        # No write recorded; TUI still alive.  (notify is a non-blocking toast.)
+        assert mock_inner.moves == []
+        assert isinstance(app.screen, SortScreen)
+
+
+async def test_finish_drains_before_summary(tui_config: SorterConfig) -> None:
+    """T-13-08: finish defers until writes drain; the summary reflects the failure.
+
+    A single note FAILS its worker write.  Pressing 'x' advances to the end and
+    reaches ``_finish`` while the write is still in flight → ``_finish_pending``
+    is True right after the keystroke (summary not yet finalized).  After
+    draining, the failure landed in the FINAL summary (Errors 1 / Moved 0 with a
+    "Needs attention" line naming the note) and ``app.sort_in_progress`` is False
+    only after the drain completed.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = _make_archive_note("drain-1")
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, [note])
+
+    # Gate the failing write so _finish_pending is observable while the write is
+    # still in flight (deterministic; the worker would otherwise drain in the pause).
+    gate = threading.Event()
+
+    def gated_failing_move(note_id: str, folder_path: FolderPath) -> None:
+        gate.wait(timeout=5.0)
+        raise NotesMoveError(note_id)
+
+    mock_inner.move_note = gated_failing_move  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        await pilot.press("x")
+        await pilot.pause()
+        # Finish was deferred while the gated write is in flight (drain-before-summary).
+        assert sort_screen._finish_pending is True
+        assert app.sort_in_progress is True, "guard must stay armed while writes pend"
+
+        # Release the gate — the write fails, the drainer completes the finish.
+        gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Finish completed after the drain — failure reflected in the final summary.
+        summary = sort_screen._session.summary()
+        assert summary.errors == 1
+        assert summary.moved == 0
+        preview_text = str(sort_screen.query_one("#note-preview", Static).render())
+        assert "Errors:  1" in preview_text, preview_text
+        assert "Moved:   0" in preview_text, preview_text
+        assert "Needs attention" in preview_text, preview_text
+        assert "drain-1" in preview_text, preview_text
+        # Guard cleared only after the drain completed the finish.
+        assert app.sort_in_progress is False
+
+
+async def test_drained_requeue_rearms_writer(tui_config: SorterConfig) -> None:
+    """T-13-09 lost-wakeup: _on_writer_drained re-arms when an item arrived in the gap.
+
+    Drive the re-check branch deterministically (no thread-timing reliance): with
+    the writer idle, append an item to ``_write_queue`` while ``_writer_active`` is
+    False, then call ``_on_writer_drained()`` directly on the main thread.  It MUST
+    re-arm (clear flag → re-check non-empty queue → restart drainer).  A regression
+    that reorders the clear/re-check would leave the item stranded — caught here by
+    asserting the queued move is actually written after draining.
+
+    Args:
+        tui_config: SorterConfig fixture.
+    """
+    note = _make_archive_note("wake-1")
+    app, mock_inner, _spy = _make_app_with_spy(tui_config, [note])
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(SortScreen(year_provider=lambda: 2026))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        sort_screen: SortScreen = app.screen  # type: ignore[assignment]
+
+        # Writer idle; simulate an item enqueued in the lost-wakeup gap.
+        assert sort_screen._writer_active is False
+        sort_screen._write_queue.append(("wake-1", ("Archive", "2026"), "Archive › 2026"))
+        sort_screen._on_writer_drained()
+
+        # Re-armed: a fresh drainer was started for the stranded item.
+        assert sort_screen._writer_active is True
+
+        # Drain it and confirm the queued move was actually written (not stranded).
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("wake-1", ("Archive", "2026")) in mock_inner.moves, (
+            f"lost-wakeup item must be written after re-arm, got {mock_inner.moves!r}"
+        )
+        assert len(sort_screen._write_queue) == 0
+        assert sort_screen._writer_active is False

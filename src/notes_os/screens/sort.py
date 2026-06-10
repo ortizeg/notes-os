@@ -91,6 +91,7 @@ The ``_after_move`` seam (06-03):
 from __future__ import annotations
 
 import logging
+from collections import deque
 from typing import TYPE_CHECKING, ClassVar
 
 from textual import work
@@ -113,7 +114,7 @@ if TYPE_CHECKING:
 
     from notes_os.app import NotesOSApp
     from notes_os.sorter.extractor import ExtractedTask
-    from notes_os.sorter.models import Note, NoteRef
+    from notes_os.sorter.models import FolderPath, Note, NoteRef
 
 
 logger = logging.getLogger(__name__)
@@ -223,6 +224,26 @@ class SortScreen(Screen[None]):
         self._previews_total: int = 0  # M — total notes (== len(self._refs))
         self._previews_loaded: int = 0  # N — notes whose bodies have landed
         self._previews_streaming: bool = False  # True only while paged load runs
+        # Off-thread write plumbing (Phase 13-02, PERF-04/05).  A move advances
+        # the UI optimistically; the actual ensure_folder + move_note (+ the
+        # per-session backup) runs on a SINGLE serialized background drainer so
+        # the Phase-12 backup latch and move ordering are never corrupted by
+        # concurrency.  The names below are reused by Phase 14 (Undo/move-back)
+        # and Phase 15 (Resume) which enqueue through the same path.
+        #
+        # FIFO of pending writes (note_id, folder_path, display).  Appended on
+        # the main thread in _enqueue_write; popped (left) by the single drainer.
+        self._write_queue: deque[tuple[str, FolderPath, str]] = deque()
+        # Single-drainer guard.  Read/written ONLY on the main thread (in
+        # _enqueue_write and _on_writer_drained); the worker NEVER touches it.
+        # True while a _drain_write_queue worker is in flight → at most ONE writer.
+        self._writer_active: bool = False
+        # "Needs attention" list of (note_id, display, message) for writes that
+        # FAILED off-thread — surfaced in the session summary (PERF-05).
+        self._failed_moves: list[tuple[str, str, str]] = []
+        # Set when _advance reaches the end while writes are still in flight; the
+        # drainer triggers the real finish once the queue empties (drain-before-summary).
+        self._finish_pending: bool = False
 
     def compose(self) -> ComposeResult:
         """Lay out the sort-screen widgets.
@@ -255,10 +276,16 @@ class SortScreen(Screen[None]):
         """
         app: NotesOSApp = self.app  # type: ignore[assignment]
 
+        # defer_writes=True (the 13-01 seam): the router RESOLVES the move
+        # (folder_path + display_path) but performs NO ensure_folder / move_note /
+        # backup on the event loop — SortScreen owns the serialized off-thread
+        # write so a move never freezes the UI (PERF-04).  The CLI SortController
+        # leaves defer_writes at its False default and still writes synchronously.
         self._router = Router(
             repo=app.repo,
             config=app.app_config,
             year_provider=self._year_provider,
+            defer_writes=True,
         )
         self._session = SortSession()
 
@@ -781,45 +808,180 @@ class SortScreen(Screen[None]):
         self.notify(_HELP_TEXT, title="Sort Help", timeout=8.0)
 
     def _handle_move(self, note: Note, result: RouteResult) -> None:
-        """Record a successful move, then advance (or defer advance to modal).
+        """Optimistically record + confirm + advance a move; write off-thread.
 
-        Wraps the move in ``try/except NotesOSError`` so one failure does NOT
-        abort the session (T-06-05 mitigation, mirrors T-04-10 in controller).
+        OPTIMISTIC ADVANCE (PERF-04): a move now feels as instant as a skip.
+        The router resolved the destination with ``defer_writes=True`` (no I/O on
+        the event loop), so this method does ONLY fast, local work synchronously —
+        it records the move, shows a non-blocking confirmation, enqueues the actual
+        ``ensure_folder`` + ``move_note`` (+ the per-session backup) onto a single
+        serialized off-thread drainer, and advances to the next note IMMEDIATELY.
+        The old per-move ~1 s freeze is gone: AppleScript/backup never runs on the
+        event loop here.
 
-        After recording, calls :meth:`_after_move` which returns ``True`` when
-        it pushed the ``TaskExtractScreen`` modal and will call ``_advance``
-        via the dismiss callback.  On ``False`` (disabled path or no tasks),
-        ``_advance`` is called immediately here.
+        Order is load-bearing (T-13-10 — no advance/worker race): ``note.id`` +
+        ``folder_path`` + ``display`` are captured into LOCALS and enqueued BEFORE
+        :meth:`_advance` changes ``_index`` / ``_current_note``, so the in-flight
+        write can never be mis-targeted by a later index change.
 
-        When an error occurs, advance is always immediate (no modal on error).
+        ``record_move`` counts the move OPTIMISTICALLY; if the off-thread write
+        later fails, :meth:`_on_write_failed` reconciles the count
+        (move → error) and the note is retained in the inbox (PERF-05).
 
-        Per-move operations (``router.handle_*`` → ``ensure_folder`` /
-        ``move_note`` / backup) block the event loop for ~1 s each on the real
-        AppleScript backend.  This is acceptable in M1 — a brief per-move pause
-        is visible but the app remains correct and the UX is usable.  Making
-        these async/threaded is left as future work (would require refactoring
-        the Router and BackingUpNotesRepository interfaces).
+        After enqueueing, :meth:`_after_move` runs exactly as before: extraction
+        is OFF by default (returns ``False`` → advance immediately); when enabled
+        and tasks are found it pushes the modal and ``_advance`` fires via
+        :meth:`_on_tasks_resolved` (T-06-08 path preserved byte-for-byte).
+
+        The ``try/except NotesOSError`` guards ONLY the pure local steps
+        (``record_move`` / ``_after_move``); the write itself is off-thread and
+        can no longer raise synchronously here.
 
         Args:
             note: The note that was just moved.
             result: The ``RouteResult`` with ``action==MOVE`` and
                 ``folder_path`` populated.
         """
+        if result.folder_path is None:
+            return
+        # Capture into locals BEFORE advancing (T-13-10 no advance/worker race).
+        note_id = note.id
+        folder_path = result.folder_path
+        display = result.display_path or ""
+
         extraction_deferred = False
         try:
-            if result.folder_path is not None:
-                self._session.record_move(note.id, result.folder_path)
-                logger.debug("Note %r moved to %s", note.id, result.display_path)
-                # Signal to the app that a session is in progress (T-06-11 mitigation)
-                self.app.sort_in_progress = True  # type: ignore[attr-defined]
-                # Use cached note for extraction (has preview); fall back to whatever we have
-                note_for_extraction = self._note_cache.get(note.id, note)
-                extraction_deferred = self._after_move(note_for_extraction)
+            self._session.record_move(note_id, folder_path)  # optimistic count
+            logger.debug("Note %r optimistically moved to %s", note_id, display)
+            # Signal to the app that a session is in progress (T-06-11 mitigation).
+            self.app.sort_in_progress = True  # type: ignore[attr-defined]
+            # Non-blocking toast confirmation — does NOT gate the next-note render.
+            self.notify(f"moved ✓ → {display}")
+            # Dispatch the actual ensure_folder + move_note (+ backup) off-thread.
+            self._enqueue_write(note_id, folder_path, display)
+            # Use the cached note for extraction (has preview); fall back to ref note.
+            note_for_extraction = self._note_cache.get(note_id, note)
+            extraction_deferred = self._after_move(note_for_extraction)
         except NotesOSError as exc:
-            self._session.record_error(note.id, str(exc))
-            logger.warning("SortScreen: error moving note %r: %s", note.id, exc)
+            self._session.record_error(note_id, str(exc))
+            logger.warning("SortScreen: error preparing move for note %r: %s", note_id, exc)
         if not extraction_deferred:
             self._advance()
+
+    # ------------------------------------------------------------------
+    # Serialized off-thread write drainer (PERF-04 / PERF-05)
+    # ------------------------------------------------------------------
+
+    def _enqueue_write(self, note_id: str, folder_path: FolderPath, display: str) -> None:
+        """Enqueue a pending write and arm the single drainer if idle.
+
+        Appends ``(note_id, folder_path, display)`` to :attr:`_write_queue` and,
+        iff no drainer is currently running, sets :attr:`_writer_active` and starts
+        :meth:`_drain_write_queue`.  Both the append and the flag mutation happen on
+        the main/event-loop thread, so this producer / single-consumer guard is
+        race-free and guarantees at most ONE in-flight writer (keeps the Phase-12
+        backup latch and move ordering safe — T-13-05 / T-13-06).
+
+        Reusable by Phase 14 (Undo) for move-back writes through the same path.
+
+        Args:
+            note_id: The opaque note id whose write is pending.
+            folder_path: The resolved destination path the worker will write to.
+            display: The human-readable destination (for failure messages).
+        """
+        self._write_queue.append((note_id, folder_path, display))
+        if not self._writer_active:
+            self._writer_active = True
+            self._drain_write_queue()
+
+    @work(thread=True)
+    def _drain_write_queue(self) -> None:
+        """Drain the FIFO write queue one item at a time off the event-loop thread.
+
+        Exactly ONE instance is ever in flight (guarded by :attr:`_writer_active`,
+        set on the main thread before the worker starts), so only this single
+        thread ever calls ``move_note`` / ``ensure_folder`` (and thus the
+        non-thread-safe Phase-12 backup latch) — T-13-05.  ``ensure_folder`` is
+        always issued BEFORE ``move_note`` so the destination exists.
+
+        FIFO ordering (``popleft`` in enqueue order) means moves execute in the
+        order the user issued them (T-13-06).  ``deque.append`` / ``deque.popleft``
+        are individually atomic under the GIL; the producer (main thread) only
+        appends, this single consumer only pops, so no lock is needed.
+
+        A write that raises :class:`~notes_os.exceptions.NotesOSError` (covering
+        ``BackupError`` / ``NotesMoveError`` / ``FolderNotFoundError``) is caught
+        PER ITEM and marshalled to :meth:`_on_write_failed` on the main thread; the
+        drain continues so one bad move never aborts the session (PERF-05 / T-06-05).
+        When the queue empties, :meth:`_on_writer_drained` is marshalled back to the
+        main thread to clear the flag and re-check for a lost wakeup (T-13-09).
+        """
+        app: NotesOSApp = self.app  # type: ignore[assignment]
+        while self._write_queue:
+            note_id, folder_path, display = self._write_queue.popleft()
+            try:
+                app.repo.ensure_folder(folder_path)
+                app.repo.move_note(note_id, folder_path)
+            except NotesOSError as exc:
+                self.app.call_from_thread(self._on_write_failed, note_id, display, str(exc))
+            else:
+                logger.debug("Off-thread write complete: note %r → %s", note_id, display)
+        # Queue drained — hand control back to the main thread to clear the flag,
+        # re-check for a lost wakeup, and complete a pending finish if any.
+        self.app.call_from_thread(self._on_writer_drained)
+
+    def _on_writer_drained(self) -> None:
+        """Clear the drainer flag, re-check for a lost wakeup, finish if pending.
+
+        Runs on the MAIN thread (via ``call_from_thread``).  Ordering is critical
+        (T-13-09 lost-wakeup guard): clear :attr:`_writer_active` FIRST, THEN
+        re-check :attr:`_write_queue`.  An item enqueued in the gap between the
+        worker's empty-check and this clear would otherwise never be written —
+        re-arming a fresh drainer here closes that window.  Both the producer
+        (:meth:`_enqueue_write`) and this flag mutation run on the main thread, so
+        the guard is race-free.
+
+        If a finish was deferred while writes were in flight (:attr:`_finish_pending`)
+        and the queue is now fully drained, the real finish completes here so the
+        summary reflects landed failures (drain-before-summary — T-13-08).
+        """
+        self._writer_active = False
+        if self._write_queue:
+            # Lost-wakeup recovery: an item arrived after the worker's last check.
+            self._writer_active = True
+            self._drain_write_queue()
+            return
+        if self._finish_pending:
+            self._finish_pending = False
+            self._complete_finish()
+
+    def _on_write_failed(self, note_id: str, display: str, message: str) -> None:
+        """Surface + record + retain a write that failed off-thread (PERF-05).
+
+        Runs on the MAIN thread (via ``call_from_thread``).  Reconciles the
+        optimistic move into an error via
+        :meth:`~notes_os.sorter.session.SortSession.record_move_failure`
+        (move → error), tracks the failure in :attr:`_failed_moves` for the
+        summary's "Needs attention" section, and shows a non-blocking
+        :meth:`notify` naming the note that stayed in the inbox.
+
+        The note physically STAYED in the inbox — the worker's ``move_note``
+        raised before any removal, so the note is retained, never silently
+        dropped (PERF-05 / T-06-05).  This does NOT advance or block: the user
+        already advanced past this note optimistically.
+
+        Args:
+            note_id: The opaque note id whose off-thread write failed.
+            display: The human-readable intended destination of the move.
+            message: The failure description from the caught exception.
+        """
+        self._session.record_move_failure(note_id, message)
+        self._failed_moves.append((note_id, display, message))
+        self.notify(
+            f"⚠ Move failed — '{display}' note stayed in your inbox: {message}",
+            severity="warning",
+        )
+        logger.warning("SortScreen: off-thread move failed for note %r: %s", note_id, message)
 
     def _after_move(self, note: Note) -> bool:
         """Post-move hook: optionally show TaskExtractScreen, gated on config.
@@ -914,13 +1076,35 @@ class SortScreen(Screen[None]):
             self._render_current_note()
 
     def _finish(self) -> None:
-        """Render the session summary and write the audit log.
+        """Finalize the session — DRAINING any in-flight writes first (T-13-08).
 
-        Computes the :class:`~notes_os.sorter.session.SessionSummary`, renders
-        it in the note-preview panel, writes the audit log via
-        ``_session.write_log()``, and offers navigation back to HomeScreen.
-        Resets ``app.sort_in_progress`` to ``False`` so a subsequent ``Q``
-        quits directly (session is complete; T-06-11 guard no longer needed).
+        Reached from :meth:`_advance` when the last note is processed.  If a write
+        is still in flight (:attr:`_writer_active`) or queued (:attr:`_write_queue`
+        non-empty), the finish is DEFERRED: :attr:`_finish_pending` is set and the
+        drainer's :meth:`_on_writer_drained` completes the finish once the queue
+        empties, so the summary reflects landed failures (drain-before-summary).
+
+        While writes are pending, ``app.sort_in_progress`` stays ``True`` so the
+        ConfirmQuitModal guard still fires on Q (it is cleared only in
+        :meth:`_complete_finish`, after the drain).  When no writes are pending the
+        finish completes immediately.
+        """
+        if self._writer_active or self._write_queue:
+            self._finish_pending = True
+            logger.debug("SortScreen: finish deferred until off-thread writes drain")
+            return
+        self._complete_finish()
+
+    def _complete_finish(self) -> None:
+        """Render the session summary and write the audit log (post-drain).
+
+        Computes the :class:`~notes_os.sorter.session.SessionSummary` AFTER the
+        write queue has drained so landed failures are reflected in the counts,
+        renders it in the note-preview panel (appending a "Needs attention"
+        section listing :attr:`_failed_moves` when non-empty), writes the audit
+        log via ``_session.write_log()``, and offers navigation back to
+        HomeScreen.  Resets ``app.sort_in_progress`` to ``False`` so a subsequent
+        ``Q`` quits directly (session is complete; T-06-11 guard no longer needed).
         """
         app: NotesOSApp = self.app  # type: ignore[assignment]
         summary = self._session.summary()
@@ -938,6 +1122,14 @@ class SortScreen(Screen[None]):
             f"Log: {log_path}\n\n"
             f"Press Esc or B to return home."
         )
+        if self._failed_moves:
+            attention_lines = "\n".join(
+                f"  • {display} — {message}" for _note_id, display, message in self._failed_moves
+            )
+            summary_text = (
+                f"{summary_text}\n\n"
+                f"Needs attention (these notes stayed in your inbox):\n{attention_lines}"
+            )
         self.query_one("#note-title", Static).update("Sort Session Complete")
         self.query_one("#note-preview", Static).update(summary_text)
         self.query_one("#prompt", Static).update("")

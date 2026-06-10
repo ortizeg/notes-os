@@ -275,3 +275,99 @@ class TestWriteLogContents:
         # Should contain the numeric values 2, 1, 1 somewhere near the summary line
         assert "2" in content  # moved
         assert "1" in content  # skipped / errors
+
+
+# ---------------------------------------------------------------------------
+# Phase 13-01 — record_move_failure: convert an optimistic move into an error
+# (PERF-05 enabler)
+# ---------------------------------------------------------------------------
+
+
+class TestRecordMoveFailure:
+    """record_move_failure reconciles an optimistic move whose write failed."""
+
+    def test_move_then_failure_converts_count(self) -> None:
+        """move -> move_failure for the same id: moved 1->0, errors 0->1."""
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("n1", ("Projects",))
+        session.record_move_failure("n1", "osascript timeout")
+        assert session.moved == 0
+        assert session.errors == 1
+        assert session.skipped == 0
+
+    def test_summary_reflects_conversion(self) -> None:
+        """summary() reads the reconciled counters."""
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("n1", ("Projects",))
+        session.record_move_failure("n1", "osascript timeout")
+        s = session.summary()
+        assert s.moved == 0
+        assert s.errors == 1
+
+    def test_event_rewritten_to_error_in_log(self, tmp_path: Path) -> None:
+        """The MOVE event for n1 becomes an [ERROR] line carrying the message."""
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("n1", ("Projects",))
+        session.record_move_failure("n1", "osascript timeout")
+        fixed_dt = datetime.datetime(2031, 1, 2, 3, 4, 5)
+        content = session.write_log(tmp_path, now=fixed_dt).read_text()
+        # n1 surfaces as an ERROR line with the message; no MOVE line for n1.
+        assert "[ERROR]" in content
+        assert "osascript timeout" in content
+        assert "[MOVE ]  n1" not in content
+
+    def test_no_prior_move_records_fresh_error(self) -> None:
+        """No prior move for the id: errors increments, moved stays at 0."""
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move_failure("ghost", "boom")
+        assert session.errors == 1
+        assert session.moved == 0
+
+    def test_count_never_goes_negative(self) -> None:
+        """A move_failure with no matching move never drives moved below zero."""
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("a", ("Projects",))
+        # 'b' was never moved — must not decrement the unrelated 'a' move.
+        session.record_move_failure("b", "boom")
+        assert session.moved == 1
+        assert session.errors == 1
+
+    def test_mixed_sequence_counts(self) -> None:
+        """move(a), move(b), skip(c), fail(a) -> moved 1, skipped 1, errors 1."""
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("a", ("Projects",))
+        session.record_move("b", ("Areas",))
+        session.record_skip("c")
+        session.record_move_failure("a", "fail")
+        assert session.moved == 1
+        assert session.skipped == 1
+        assert session.errors == 1
+        assert session.summary().total == 3
+
+    def test_failure_targets_most_recent_move_for_id(self, tmp_path: Path) -> None:
+        """When a note was moved twice, the most-recent MOVE is the one rewritten."""
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.record_move("n1", ("Projects",))
+        session.record_move("n1", ("Areas",))
+        session.record_move_failure("n1", "second move failed")
+        assert session.moved == 1
+        assert session.errors == 1
+        fixed_dt = datetime.datetime(2031, 1, 2, 3, 4, 5)
+        content = session.write_log(tmp_path, now=fixed_dt).read_text()
+        # The earlier move to Projects survives; the later one is the error.
+        assert "Projects" in content
+        assert "second move failed" in content
