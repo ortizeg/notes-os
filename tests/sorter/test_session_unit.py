@@ -524,3 +524,61 @@ class TestUndoStackErroredEventRule:
         session.record_move_failure("ghost", "boom")
         assert session.pop_undo() is None
         assert session.errors == 1
+
+
+# ---------------------------------------------------------------------------
+# restore_counts — re-seed the running tally on resume (UX-03)
+# ---------------------------------------------------------------------------
+
+
+class TestRestoreCounts:
+    """restore_counts seeds moved/skipped/errors without touching undo/events."""
+
+    def test_restore_counts_seeds_counters(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.restore_counts(moved=5, skipped=3, errors=1)
+
+        summary = session.summary()
+        assert summary.moved == 5
+        assert summary.skipped == 3
+        assert summary.errors == 1
+        assert summary.total == 9
+
+    def test_restore_counts_leaves_undo_stack_untouched(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.restore_counts(moved=2, skipped=1, errors=0)
+
+        # The undo stack is still empty — restore_counts only moved the integers.
+        assert session.pop_undo() is None
+
+        # A subsequent record_skip then pop_undo reverses cleanly.
+        session.record_skip("n1", index=0)
+        entry = session.pop_undo()
+        assert entry is not None
+        assert entry.note_id == "n1"
+        # The restored skipped base (1) plus the recorded-then-undone skip nets to 1.
+        assert session.skipped == 1
+
+    def test_restore_counts_guards_negative_to_zero(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.restore_counts(moved=-1, skipped=-2, errors=-3)
+
+        summary = session.summary()
+        assert summary.moved == 0
+        assert summary.skipped == 0
+        assert summary.errors == 0
+
+    def test_restore_then_record_continues_tally(self) -> None:
+        from notes_os.sorter.session import SortSession
+
+        session = SortSession()
+        session.restore_counts(moved=10, skipped=0, errors=0)
+        session.record_move("n1", ("Projects",))
+
+        assert session.summary().moved == 11
