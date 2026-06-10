@@ -27,14 +27,17 @@ full keyboard-driven TUI.  It owns:
   before exiting.  On Home/idle ``Q`` exits immediately.
 
 ``main()`` is the ``notes`` CLI entry point (``notes_os.app:main`` in
-``pyproject.toml``).  It configures logging, resolves the package version, and
-calls ``NotesOSApp().run()`` to start the event loop.
+``pyproject.toml``).  It configures logging, resolves the package version, loads
+the config (turning an invalid config file into a friendly message + exit code 1
+rather than a traceback), and calls ``NotesOSApp(config=config).run()`` to start
+the event loop.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
 import logging
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -315,6 +318,13 @@ def main() -> None:
     The ``notes = notes_os.app:main`` entry point in ``pyproject.toml`` is
     unchanged from Phase 1 — no subcommands are added in Phase 6.
 
+    Configuration is loaded here (rather than lazily inside ``NotesOSApp``) so a
+    malformed ``~/.notes-os/config.toml`` surfaces as a single clear,
+    actionable log line and exit code 1 — never a raw Python traceback. Both
+    failure modes are handled: :class:`~notes_os.config.ConfigError` (invalid
+    TOML syntax) and :class:`pydantic.ValidationError` (well-formed TOML whose
+    values fail schema validation).
+
     Returns:
         None
     """
@@ -328,5 +338,23 @@ def main() -> None:
     except importlib.metadata.PackageNotFoundError:
         version = "0.0.0+unknown"
 
+    # Load config up front so a bad config file produces a friendly message,
+    # not a traceback from deep inside NotesOSApp.__init__ (deferred import keeps
+    # AppleScript machinery out of module load — see class docstring).
+    from pydantic import ValidationError
+
+    from notes_os.config import ConfigError, load_config
+
+    try:
+        config = load_config()
+    except (ConfigError, ValidationError) as exc:
+        logger.error(
+            "Could not start NotesOS — your configuration is invalid:\n%s\n"
+            "Fix the issue in ~/.notes-os/config.toml (or delete the file to use "
+            "built-in defaults) and try again.",
+            exc,
+        )
+        sys.exit(1)
+
     logger.info("NotesOS %s — launching TUI.", version)
-    NotesOSApp().run()
+    NotesOSApp(config=config).run()
