@@ -18,7 +18,9 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-07)
+See: .planning/PROJECT.md (updated 2026-06-08)
+
+**v1.0 archived** → `.planning/milestones/v1.0-{ROADMAP,REQUIREMENTS}.md`; index in `.planning/MILESTONES.md`. Live ROADMAP collapsed; REQUIREMENTS.md cleared for the next milestone.
 
 **Core value:** A person can triage their Apple Notes inbox into PARA folders with single keystrokes — fast, mouse-free, and non-destructive — with the Notes database backed up before every write.
 **Current focus:** Milestone 1 COMPLETE & validated. Next: M2 — Distillation Engine (`/gsd-new-milestone`).

@@ -989,6 +989,40 @@ def test_prune_retention_keeps_newest(tmp_path: Path) -> None:
     assert kept_ts == expected_ts, f"wrong backups kept: {kept_ts} vs {expected_ts}"
 
 
+def test_list_and_prune_deterministic_for_same_second_backups(tmp_path: Path) -> None:
+    """Same-second backups (distinct labels) are total-ordered, so prune is deterministic.
+
+    The backup dir-name timestamp has second resolution, so three backups created
+    within the same second parse to EQUAL ``datetime`` values.  Without a
+    secondary sort key, ``list()`` order (and hence which backup ``prune`` drops)
+    depends on filesystem ``iterdir()`` order and is non-deterministic.  The
+    tie-break by directory name makes the ordering stable and repeatable.
+    """
+    db_dir = make_db_dir(tmp_path, include_sidecars=False)
+    cfg = make_config(tmp_path, notes_db_dir=db_dir)
+    mgr = BackupManager(cfg)
+
+    same = datetime.datetime(2026, 6, 7, 12, 0, 0)
+    a = mgr.create(label="aaa", now=same)
+    b = mgr.create(label="bbb", now=same)
+    c = mgr.create(label="ccc", now=same)
+
+    # list() is repeatable AND ordered by dir name descending among the tie.
+    order1 = [x.path.name for x in mgr.list()]
+    order2 = [x.path.name for x in mgr.list()]
+    assert order1 == order2, "list() ordering must be deterministic across calls"
+    assert order1 == [c.path.name, b.path.name, a.path.name], (
+        f"expected dir-name-descending tie-break, got {order1}"
+    )
+
+    # prune(retention=2) deterministically drops the lowest-sorting dir ('aaa').
+    deleted = mgr.prune(retention=2)
+    assert [d.path.name for d in deleted] == [a.path.name], (
+        f"expected only {a.path.name!r} pruned, got {[d.path.name for d in deleted]}"
+    )
+    assert {x.path.name for x in mgr.list()} == {b.path.name, c.path.name}
+
+
 def test_prune_default_uses_max_backups(tmp_path: Path) -> None:
     """prune() with no args uses config.max_backups as the retention count."""
     backup_dir = tmp_path / "bk"
