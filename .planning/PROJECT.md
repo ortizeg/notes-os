@@ -12,6 +12,18 @@ NotesOS is a local-first, AI-augmented CLI/TUI for managing, distilling, and con
 
 A person can triage their Apple Notes inbox into a PARA-structured folder hierarchy with single keystrokes — fast, mouse-free, and non-destructive (notes are moved, never deleted), with their Notes database safely backed up before any write.
 
+## Current State
+
+**Shipped: v1.0 — PARA Notes Sorter** (2026-06-08). The `notes` Textual TUI triages your
+Apple Notes inbox into PARA folders by keystroke, backs up the Notes DB before every write,
+and optionally extracts tasks. 6 phases, 19 plans, ~356 tests / ~92% coverage; archived under
+`.planning/milestones/v1.0-*` and indexed in `.planning/MILESTONES.md`.
+
+**Next milestone goals — v2.0 (Distillation Engine, the Distill step):** progressive
+summarization with a 3-tier LLM backend (Apple Foundation Models → Ollama → Claude,
+`backend="auto"`), a folder chat agent, and per-folder root-note generation written back to
+Notes. Reuses the M1 bridge + backup + config. Start with `/gsd-new-milestone`.
+
 ## Requirements
 
 ### Validated
