@@ -13,6 +13,7 @@ pytest's ``tmp_path`` fixture, and the integration test explicitly asserts that
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 
 import pytest
 
@@ -81,7 +82,11 @@ class TestBackupManagerLifecycle:
         )
 
         # --- 3. create() ---
-        first_backup = mgr.create(label="integration-test")
+        # Explicit, increasing timestamps so the create order is also the time
+        # order — otherwise three create() calls land in the same wall-clock
+        # second (the dir-name timestamp is second-resolution) and "oldest" is
+        # ambiguous. This makes the prune-by-time assertion below deterministic.
+        first_backup = mgr.create(label="integration-test", now=datetime(2026, 1, 1, 0, 0, 1))
         assert first_backup.path.exists(), "backup directory must exist after create()"
         assert first_backup.label == "integration-test"
         for name in NOTE_STORE_FILES:
@@ -113,8 +118,8 @@ class TestBackupManagerLifecycle:
             )
 
         # --- 6. prune(retention=2) after creating more backups ---
-        mgr.create(label="second")
-        mgr.create(label="third")
+        mgr.create(label="second", now=datetime(2026, 1, 1, 0, 0, 2))
+        mgr.create(label="third", now=datetime(2026, 1, 1, 0, 0, 3))
 
         all_backups = mgr.list()
         assert len(all_backups) == 3, f"expected 3 backups before prune, got {len(all_backups)}"

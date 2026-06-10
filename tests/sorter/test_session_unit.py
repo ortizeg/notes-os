@@ -523,6 +523,7 @@ class TestUndoStackErroredEventRule:
         session = SortSession()
         session.record_move_failure("ghost", "boom")
         assert session.pop_undo() is None
+        assert session.errors == 1
 
 
 # ---------------------------------------------------------------------------
